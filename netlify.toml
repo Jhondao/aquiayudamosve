@@ -1,0 +1,20 @@
+[build]
+  base = "frontend"
+  command = "npm run build"
+  publish = "dist"
+
+# Proxies /api/* to the Render backend so the browser sees everything as
+# same-origin (netlify domain) — this is what lets the httpOnly refresh
+# cookie work without switching it to SameSite=None. Replace the target
+# below with your real Render service URL after deploying the backend.
+[[redirects]]
+  from = "/api/*"
+  to = "https://TU-BACKEND.onrender.com/api/:splat"
+  status = 200
+  force = true
+
+# SPA fallback so client-side routes (react-router-dom) don't 404 on refresh.
+[[redirects]]
+  from = "/*"
+  to = "/index.html"
+  status = 200

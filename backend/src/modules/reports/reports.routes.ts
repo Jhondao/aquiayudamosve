@@ -93,8 +93,7 @@ router.post("/:id/evidence", requireAuth, confirmationLimiter, uploadEvidenceIma
 
     let imageUrl: string | undefined;
     if (req.file) {
-      const filename = await persistEvidenceImage(req.file.buffer);
-      imageUrl = `/api/uploads/${filename}`;
+      imageUrl = await persistEvidenceImage(req.file.buffer);
     }
 
     if (!imageUrl && !sourceUrl) {

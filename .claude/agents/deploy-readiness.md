@@ -16,8 +16,9 @@ Checks to run:
 3. **Docker Compose**: read `docker-compose.yml`. It currently only defines `mysql` for local dev — confirm DEPLOYMENT.md explains how the backend/frontend actually get deployed (separate process, container, or PaaS) since compose alone doesn't ship the app.
 4. **Migrations**: confirm `backend/prisma/migrations/` has a migration matching every model in `schema.prisma`, and that `DEPLOYMENT.md` documents running `prisma migrate deploy` (not `migrate dev`) in production.
 5. **Health check**: confirm `GET /api/health` (defined in `backend/src/app.ts`) is referenced in `DEPLOYMENT.md` as the readiness/health endpoint for whatever host/orchestrator is used.
-6. **Uploads storage**: `backend/uploads` is used by `reports/uploads.ts` for user-submitted images (via multer/sharp). Confirm DEPLOYMENT.md addresses where uploads persist in production (local disk is not durable on most PaaS — flag if this isn't addressed).
-7. **Build artifacts not committed**: confirm `backend/dist`, `frontend/dist`, and `node_modules` are git-ignored, and that nothing under `backend/uploads` other than a `.gitkeep`-style placeholder is tracked.
+6. **Uploads storage**: evidence photos are processed with sharp and uploaded straight to Cloudflare R2 (`backend/src/lib/r2.ts`, called from `backend/src/modules/reports/uploads.ts`) — no local disk involved. Confirm `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL` are documented in `backend/.env.example` and set in the actual deploy target's env vars (not left blank in production — `lib/r2.ts` only throws when a photo is actually uploaded, so a missing var won't be caught until a real user tries).
+7. **Same-origin / cookie setup**: if deploying frontend and backend to different hosts (e.g. Netlify + Render), confirm either (a) a proxy config (`netlify.toml` `/api/*` redirect) keeps the browser on one origin, or (b) the refresh cookie in `backend/src/modules/auth/auth.routes.ts` has been changed to `sameSite: "none"` with `secure: true`. Flag if neither is true — the refresh cookie silently won't be sent cross-site otherwise.
+8. **Build artifacts not committed**: confirm `backend/dist`, `frontend/dist`, and `node_modules` are git-ignored.
 
 ## Output format
 
@@ -30,7 +31,8 @@ DEPLOY READINESS — <READY|NOT READY>
 [✓/✗] Docker/deploy story documented and matches reality
 [✓/✗] Migrations complete, DEPLOYMENT.md uses `migrate deploy`
 [✓/✗] Health check documented
-[✓/✗] Uploads persistence addressed
+[✓/✗] R2 env vars documented and set in deploy target
+[✓/✗] Same-origin or cross-site cookie handling addressed
 [✓/✗] No build artifacts committed
 
 Blocking issues:
