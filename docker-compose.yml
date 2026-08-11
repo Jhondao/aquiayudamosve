@@ -1,0 +1,22 @@
+services:
+  mysql:
+    image: mysql:8.0
+    container_name: aquiayudamosve_mysql
+    restart: unless-stopped
+    environment:
+      MYSQL_DATABASE: aquiayudamosve
+      MYSQL_USER: aquiayudamosve
+      MYSQL_PASSWORD: aquiayudamosve_dev_pw
+      MYSQL_ROOT_PASSWORD: aquiayudamosve_root_pw
+    ports:
+      - "3306:3306"
+    volumes:
+      - aquiayudamosve_mysql_data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mysqladmin", "ping", "-h", "localhost", "-u", "root", "-paquiayudamosve_root_pw"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+volumes:
+  aquiayudamosve_mysql_data:

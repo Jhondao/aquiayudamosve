@@ -1,0 +1,273 @@
+// AquiAyudamosVE — Prisma schema
+// Modular monolith, MySQL. See PROMPT MAESTRO section 17 for the table list this maps to.
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "mysql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  citizen
+  moderator
+  admin
+}
+
+enum ReputationLevel {
+  nuevo
+  colaborador
+  colaborador_confiable
+  voluntario_verificado
+  organizacion
+  entidad_institucional
+}
+
+enum CategoryGroup {
+  ayuda
+  necesidad
+  critico
+  info
+}
+
+enum ReportStatus {
+  active
+  inactive
+  hidden
+}
+
+enum ConfirmationType {
+  confirm
+  unsure
+  incorrect
+}
+
+model User {
+  id                String   @id @default(uuid())
+  email             String   @unique
+  passwordHash      String
+  displayName       String
+  role              UserRole @default(citizen)
+  organizationId    String?
+  createdAt         DateTime @default(now())
+  updatedAt         DateTime @updatedAt
+  deletedAt         DateTime?
+
+  organization      Organization?      @relation(fields: [organizationId], references: [id])
+  reports           Report[]           @relation("ReportCreatedBy")
+  confirmations     ReportConfirmation[]
+  evidence          ReportEvidence[]
+  updates           ReportUpdate[]
+  flagsRaised       ReportFlag[]       @relation("FlagRaisedBy")
+  moderationActions ModerationAction[] @relation("ModerationActor")
+  auditLogs         AuditLog[]         @relation("AuditActor")
+  sessions          Session[]
+  securityEvents    SecurityEvent[]
+  reputation        UserReputation?
+
+  @@index([organizationId])
+  @@index([email])
+}
+
+model UserReputation {
+  userId    String          @id
+  score     Int             @default(0)
+  level     ReputationLevel @default(nuevo)
+  updatedAt DateTime        @updatedAt
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model Organization {
+  id        String   @id @default(uuid())
+  name      String
+  type      String
+  verified  Boolean  @default(false)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+  deletedAt DateTime?
+
+  members OrganizationMember[]
+  users   User[]
+  reports Report[]             @relation("ReportOrganization")
+
+  @@index([verified])
+}
+
+model OrganizationMember {
+  id             String   @id @default(uuid())
+  organizationId String
+  userId         String
+  role           String   @default("member")
+  createdAt      DateTime @default(now())
+
+  organization Organization @relation(fields: [organizationId], references: [id], onDelete: Cascade)
+
+  @@unique([organizationId, userId])
+  @@index([userId])
+}
+
+model ReportCategory {
+  id       String        @id @default(uuid())
+  group    CategoryGroup
+  key      String        @unique
+  label    String
+  active   Boolean       @default(true)
+  sortOrder Int          @default(0)
+
+  reports Report[]
+}
+
+model Report {
+  id                 String       @id @default(uuid())
+  categoryId         String
+  title              String
+  description        String       @db.Text
+  city               String
+  approxLocationText String
+  lat                Float
+  lng                Float
+  status             ReportStatus @default(active)
+  trustScore         Int          @default(20)
+  createdById        String
+  organizationId     String?
+  isSensitive        Boolean      @default(false)
+  createdAt          DateTime     @default(now())
+  updatedAt          DateTime     @updatedAt
+  lastConfirmedAt    DateTime     @default(now())
+  deletedAt          DateTime?
+
+  category      ReportCategory       @relation(fields: [categoryId], references: [id])
+  createdBy     User                 @relation("ReportCreatedBy", fields: [createdById], references: [id])
+  organization  Organization?        @relation("ReportOrganization", fields: [organizationId], references: [id])
+  confirmations ReportConfirmation[]
+  evidence      ReportEvidence[]
+  updates       ReportUpdate[]
+  flags         ReportFlag[]
+
+  @@index([city])
+  @@index([categoryId])
+  @@index([status])
+  @@index([lat, lng])
+  @@index([createdAt])
+}
+
+model ReportConfirmation {
+  id        String           @id @default(uuid())
+  reportId  String
+  userId    String
+  type      ConfirmationType
+  approxLat Float?
+  approxLng Float?
+  createdAt DateTime         @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([reportId])
+  @@index([userId])
+  @@unique([reportId, userId, type])
+}
+
+model ReportEvidence {
+  id             String   @id @default(uuid())
+  reportId       String
+  userId         String
+  imageUrl       String?
+  sourceUrl      String?
+  relatedOrgName String?
+  createdAt      DateTime @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([reportId])
+}
+
+model ReportUpdate {
+  id        String   @id @default(uuid())
+  reportId  String
+  userId    String
+  text      String
+  deactivates Boolean @default(false)
+  createdAt DateTime @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([reportId])
+}
+
+model ReportFlag {
+  id        String   @id @default(uuid())
+  reportId  String
+  userId    String
+  reason    String
+  resolved  Boolean  @default(false)
+  createdAt DateTime @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation("FlagRaisedBy", fields: [userId], references: [id])
+
+  @@index([reportId])
+}
+
+model ModerationAction {
+  id         String   @id @default(uuid())
+  adminId    String
+  action     String
+  targetType String
+  targetId   String
+  reason     String?
+  createdAt  DateTime @default(now())
+
+  admin User @relation("ModerationActor", fields: [adminId], references: [id])
+
+  @@index([targetType, targetId])
+}
+
+model AuditLog {
+  id         String   @id @default(uuid())
+  actorId    String?
+  action     String
+  entityType String
+  entityId   String
+  metadata   Json?
+  createdAt  DateTime @default(now())
+
+  actor User? @relation("AuditActor", fields: [actorId], references: [id])
+
+  @@index([entityType, entityId])
+  @@index([createdAt])
+}
+
+model Session {
+  id               String    @id @default(uuid())
+  userId           String
+  refreshTokenHash String
+  userAgent        String?
+  ip               String?
+  createdAt        DateTime  @default(now())
+  expiresAt        DateTime
+  revokedAt        DateTime?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([userId])
+}
+
+model SecurityEvent {
+  id        String   @id @default(uuid())
+  type      String
+  userId    String?
+  ip        String?
+  metadata  Json?
+  createdAt DateTime @default(now())
+
+  user User? @relation(fields: [userId], references: [id])
+
+  @@index([type])
+  @@index([createdAt])
+}

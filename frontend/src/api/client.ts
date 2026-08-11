@@ -1,0 +1,136 @@
+import type { Category, Profile, Report } from "../types";
+
+// Kept in memory only — never localStorage/sessionStorage, so an XSS payload
+// reading storage can't lift a long-lived credential. Refresh token lives in
+// an httpOnly cookie the JS layer never touches directly.
+let accessToken: string | null = null;
+let onUnauthorized: (() => void) | null = null;
+
+export function setAccessToken(token: string | null) {
+  accessToken = token;
+}
+
+export function onSessionExpired(cb: (() => void) | null) {
+  onUnauthorized = cb;
+}
+
+class ApiError extends Error {
+  status: number;
+  details?: unknown;
+  constructor(status: number, message: string, details?: unknown) {
+    super(message);
+    this.status = status;
+    this.details = details;
+  }
+}
+
+let refreshInFlight: Promise<boolean> | null = null;
+
+async function tryRefresh(): Promise<boolean> {
+  if (!refreshInFlight) {
+    refreshInFlight = fetch("/api/auth/refresh", { method: "POST", credentials: "include" })
+      .then(async (res) => {
+        if (!res.ok) return false;
+        const data = await res.json();
+        setAccessToken(data.accessToken);
+        return true;
+      })
+      .catch(() => false)
+      .finally(() => {
+        refreshInFlight = null;
+      });
+  }
+  return refreshInFlight;
+}
+
+async function request<T>(path: string, options: RequestInit = {}, retry = true): Promise<T> {
+  const headers = new Headers(options.headers);
+  if (!(options.body instanceof FormData) && options.body) {
+    headers.set("Content-Type", "application/json");
+  }
+  if (accessToken) headers.set("Authorization", `Bearer ${accessToken}`);
+
+  const res = await fetch(path, { ...options, headers, credentials: "include" });
+
+  if (res.status === 401 && retry && path !== "/api/auth/refresh" && path !== "/api/auth/login") {
+    const refreshed = await tryRefresh();
+    if (refreshed) return request<T>(path, options, false);
+    setAccessToken(null);
+    onUnauthorized?.();
+  }
+
+  const isJson = res.headers.get("content-type")?.includes("application/json");
+  const body = isJson ? await res.json().catch(() => null) : null;
+
+  if (!res.ok) {
+    throw new ApiError(res.status, body?.error ?? `Error ${res.status}`, body?.details);
+  }
+  return body as T;
+}
+
+export const api = {
+  register: (email: string, password: string, displayName: string) =>
+    request<{ accessToken: string; profile: Profile }>("/api/auth/register", {
+      method: "POST",
+      body: JSON.stringify({ email, password, displayName }),
+    }),
+  login: (email: string, password: string) =>
+    request<{ accessToken: string; profile: Profile }>("/api/auth/login", {
+      method: "POST",
+      body: JSON.stringify({ email, password }),
+    }),
+  logout: () => request<void>("/api/auth/logout", { method: "POST" }),
+  refresh: () => request<{ accessToken: string; profile: Profile }>("/api/auth/refresh", { method: "POST" }, false),
+  me: () => request<{ profile: Profile }>("/api/auth/me"),
+
+  getCategories: () => request<{ categories: Category[] }>("/api/categories"),
+
+  getReports: (params: { city?: string; group?: string; institutional?: boolean } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.city) qs.set("city", params.city);
+    if (params.group) qs.set("group", params.group);
+    if (params.institutional) qs.set("institutional", "true");
+    return request<{ reports: Report[]; total: number }>(`/api/reports?${qs.toString()}`);
+  },
+  getReport: (id: string) => request<Report>(`/api/reports/${id}`),
+  getNearby: (params: { lat: number; lng: number; city: string; radiusMeters?: number; categoryKey?: string }) => {
+    const qs = new URLSearchParams({
+      lat: String(params.lat),
+      lng: String(params.lng),
+      city: params.city,
+      ...(params.radiusMeters ? { radiusMeters: String(params.radiusMeters) } : {}),
+      ...(params.categoryKey ? { categoryKey: params.categoryKey } : {}),
+    });
+    return request<{ reports: Report[] }>(`/api/reports/nearby?${qs.toString()}`);
+  },
+  createReport: (data: {
+    categoryKey: string;
+    title: string;
+    description: string;
+    city: string;
+    approxLocationText: string;
+    lat: number;
+    lng: number;
+  }) => request<Report>("/api/reports", { method: "POST", body: JSON.stringify(data) }),
+  confirmReport: (id: string, type: "confirm" | "unsure" | "incorrect") =>
+    request<Report>(`/api/reports/${id}/confirm`, { method: "POST", body: JSON.stringify({ type }) }),
+  flagReport: (id: string, reason: string) =>
+    request<Report>(`/api/reports/${id}/flag`, { method: "POST", body: JSON.stringify({ reason }) }),
+  addUpdate: (id: string, text: string, deactivates?: boolean) =>
+    request<Report>(`/api/reports/${id}/update`, { method: "POST", body: JSON.stringify({ text, deactivates }) }),
+
+  myReports: () => request<{ profile: Profile; reports: Partial<Report>[] }>("/api/users/me/reports"),
+
+  getFlaggedReports: () => request<{ reports: Report[] }>("/api/admin/reports/flagged"),
+  moderateReport: (id: string, action: "hide" | "unhide" | "markFalse", reason: string) =>
+    request<Report>(`/api/admin/reports/${id}`, { method: "PATCH", body: JSON.stringify({ action, reason }) }),
+  getAuditLogs: () =>
+    request<{ logs: { id: string; action: string; entityType: string; entityId: string; createdAt: string; actor: { displayName: string } | null }[] }>(
+      "/api/admin/audit-logs"
+    ),
+
+  getOrganizations: () => request<{ organizations: { id: string; name: string; type: string; verified: boolean }[] }>("/api/organizations"),
+  verifyOrganization: (id: string) => request(`/api/organizations/${id}/verify`, { method: "POST" }),
+};
+
+export { ApiError };

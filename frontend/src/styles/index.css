@@ -1,0 +1,20 @@
+@import "leaflet/dist/leaflet.css";
+
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  @apply bg-ink text-slate-100 antialiased;
+}
+
+/* Fix Leaflet's default marker icon paths, which break under bundlers. */
+.leaflet-container {
+  background: #1b1e26;
+}
