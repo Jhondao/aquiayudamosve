@@ -1,13 +1,13 @@
 # Despliegue de AquiAyudamosVE
 
-Guía práctica para desplegar el MVP: API en Node.js/Express + Prisma sobre MySQL, frontend estático React/Vite, y fotos de evidencia en Cloudflare R2.
+Guía práctica para desplegar el MVP: API en Node.js/Express + Prisma sobre MySQL, frontend estático React/Vite, y fotos de evidencia en Supabase Storage.
 
 Hay dos rutas documentadas. Elige una:
 
 - **Opción A — VPS propio** (Hostinger VPS, Hetzner, etc.): todo en un servidor, mismo origen vía Nginx. Sin costos variables, control total.
 - **Opción B — Gratis** (Netlify + Render + MySQL gestionado gratis): sin servidor propio, capas gratuitas de varios proveedores. Backend gratis se "duerme" tras inactividad (cold start ~1 min).
 
-Ambas opciones comparten: variables de entorno (sección 1), Cloudflare R2 para fotos (sección 2), y migraciones de base de datos (sección 3).
+Ambas opciones comparten: variables de entorno (sección 1), Supabase Storage para fotos (sección 2), y migraciones de base de datos (sección 3).
 
 ## 1. Variables de entorno (backend)
 
@@ -22,27 +22,31 @@ Copia `backend/.env.example` a `backend/.env` y ajusta **todos** estos valores p
 | `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | Secretos de firma JWT | Generar nuevos, mínimo 32 caracteres aleatorios (`openssl rand -hex 32`). **Nunca reutilizar los valores `dev_..._change_me` de `.env.example`** |
 | `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL_DAYS` | Tiempos de expiración | Los defaults (`15m` / `7` días) son razonables |
 | `STALE_HOURS_THRESHOLD` | Horas sin confirmación antes de que un reporte empiece a decaer | Ajustar según criterio del producto |
-| `R2_ACCOUNT_ID` | ID de cuenta de Cloudflare | Ver sección 2 |
-| `R2_ACCESS_KEY_ID` / `R2_SECRET_ACCESS_KEY` | Credenciales del token API de R2 | Ver sección 2 |
-| `R2_BUCKET` | Nombre del bucket R2 | Ver sección 2 |
-| `R2_PUBLIC_URL` | URL pública base del bucket (sin `/` final) | Ver sección 2 |
+| `STORAGE_ENDPOINT` | Endpoint S3 de Supabase Storage | Ver sección 2 |
+| `STORAGE_REGION` | Región del proyecto Supabase | Ver sección 2 |
+| `STORAGE_ACCESS_KEY_ID` / `STORAGE_SECRET_ACCESS_KEY` | Credenciales S3 de Supabase Storage | Ver sección 2 |
+| `STORAGE_BUCKET` | Nombre del bucket | Ver sección 2 |
+| `STORAGE_PUBLIC_URL` | URL pública base del bucket (sin `/` final) | Ver sección 2 |
 
-El backend valida en el arranque ([backend/src/config/env.ts](backend/src/config/env.ts)) que `DATABASE_URL`, `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` existan — si falta alguna, falla inmediatamente en vez de arrancar con un secreto vacío. Las variables `R2_*` se validan solo al subir una foto ([backend/src/lib/r2.ts](backend/src/lib/r2.ts)), así que en dev/tests puedes dejarlas vacías si no vas a probar esa funcionalidad.
+El backend valida en el arranque ([backend/src/config/env.ts](backend/src/config/env.ts)) que `DATABASE_URL`, `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` existan — si falta alguna, falla inmediatamente en vez de arrancar con un secreto vacío. Las variables `STORAGE_*` se validan solo al subir una foto ([backend/src/lib/objectStorage.ts](backend/src/lib/objectStorage.ts)), así que en dev/tests puedes dejarlas vacías si no vas a probar esa funcionalidad.
 
-## 2. Fotos de evidencia (Cloudflare R2)
+## 2. Fotos de evidencia (Supabase Storage)
 
-Los reportes permiten adjuntar imágenes, procesadas con `sharp` (recorte, recompresión, se les quita el EXIF) y subidas directo a Cloudflare R2 ([backend/src/modules/reports/uploads.ts](backend/src/modules/reports/uploads.ts), [backend/src/lib/r2.ts](backend/src/lib/r2.ts)) — **no se guardan en disco del backend**, así que esto funciona igual en un VPS que en un host efímero como Render.
+Los reportes permiten adjuntar imágenes, procesadas con `sharp` (recorte, recompresión, se les quita el EXIF) y subidas directo a Supabase Storage vía su API compatible con S3 ([backend/src/modules/reports/uploads.ts](backend/src/modules/reports/uploads.ts), [backend/src/lib/objectStorage.ts](backend/src/lib/objectStorage.ts)) — **no se guardan en disco del backend**, así que esto funciona igual en un VPS que en un host efímero como Render.
+
+Se eligió Supabase Storage sobre Cloudflare R2 porque no pide tarjeta de crédito para el plan gratis. Trade-off a aceptar: **un proyecto gratis de Supabase se pausa tras 7 días sin actividad** — si la app no recibe tráfico esa semana, las fotos quedan inaccesibles hasta entrar al dashboard y reactivar el proyecto manualmente (no se pierden, solo quedan temporalmente inalcanzables). Si el proyecto gana tráfico real y constante, esto deja de ser un problema por sí solo; si no, hay que acordarse de revisarlo o migrar a un plan de pago / a R2 más adelante (el código es intercambiable: es un cliente S3 genérico en `objectStorage.ts`, cambiar de proveedor es solo cambiar variables de entorno).
 
 Configuración (una sola vez):
 
-1. Crea una cuenta gratis en [Cloudflare](https://dash.cloudflare.com/sign-up) si no tienes una.
-2. En el dashboard, ve a **R2 Object Storage** → **Create bucket**. Nómbralo, por ejemplo, `aquiayudamosve-evidence`.
-3. En el bucket, ve a **Settings** → **Public access** → habilita el acceso público (o conecta un dominio custom si prefieres). Copia la URL pública que te da (algo como `https://pub-xxxxxxxx.r2.dev`) — esa es tu `R2_PUBLIC_URL`.
-4. Ve a **R2** → **Manage API tokens** → **Create API token**, con permisos de **Object Read & Write** limitado a ese bucket. Copia el **Access Key ID** y **Secret Access Key** que te muestra (solo se ven una vez).
-5. Tu `R2_ACCOUNT_ID` está en la URL del dashboard de Cloudflare o en la página de resumen de R2 (a la derecha).
-6. Rellena en `.env` / en las variables de entorno de tu host: `R2_ACCOUNT_ID`, `R2_ACCESS_KEY_ID`, `R2_SECRET_ACCESS_KEY`, `R2_BUCKET`, `R2_PUBLIC_URL`.
+1. Crea una cuenta gratis en [supabase.com](https://supabase.com) y un proyecto nuevo (elige la región más cercana a tus usuarios).
+2. En el proyecto, ve a **Storage** → **Create a new bucket**. Nómbralo, por ejemplo, `evidence`, y márcalo como **Public bucket**.
+3. Ve a **Project Settings** → **Storage** → **S3 Connection**. Ahí ves el **Endpoint** (`https://<project-ref>.supabase.co/storage/v1/s3`) y la **Region** — esos son tus `STORAGE_ENDPOINT` y `STORAGE_REGION`.
+4. En esa misma pantalla, **New access key** (o **S3 access keys**) → genera un par de claves. Copia el **Access Key ID** y **Secret Access Key** (solo se muestran una vez).
+5. Tu `STORAGE_BUCKET` es el nombre que le pusiste en el paso 2 (`evidence`).
+6. Tu `STORAGE_PUBLIC_URL` es `https://<project-ref>.supabase.co/storage/v1/object/public/evidence` (reemplaza `<project-ref>` por el de tu proyecto, y `evidence` por el nombre real del bucket).
+7. Rellena en `.env` / en las variables de entorno de tu host: `STORAGE_ENDPOINT`, `STORAGE_REGION`, `STORAGE_ACCESS_KEY_ID`, `STORAGE_SECRET_ACCESS_KEY`, `STORAGE_BUCKET`, `STORAGE_PUBLIC_URL`.
 
-El plan gratis de R2 incluye 10 GB de almacenamiento y no cobra por tráfico de salida (a diferencia de S3), que alcanza sobrado para un MVP.
+El plan gratis de Supabase incluye 1 GB de almacenamiento de archivos y 5 GB de tráfico de salida, suficiente para un MVP.
 
 ## 3. Base de datos
 
@@ -79,9 +83,9 @@ npm run seed
                  │  puerto 4000    │   │  frontend/dist        │
                  └────────┬─────────┘   └─────────────────────┘
                           ▼
-                 ┌─────────────────┐        ┌──────────────┐
-                 │  MySQL 8         │        │  Cloudflare R2│ ◀ fotos de evidencia
-                 └─────────────────┘        └──────────────┘
+                 ┌─────────────────┐        ┌───────────────────┐
+                 │  MySQL 8         │        │  Supabase Storage  │ ◀ fotos de evidencia
+                 └─────────────────┘        └───────────────────┘
 ```
 
 **Punto crítico, no es opcional:** el frontend llama a la API con rutas **relativas** (`/api/...`, ver [frontend/src/api/client.ts](frontend/src/api/client.ts)) y usa `credentials: "include"` para mandar la cookie httpOnly del refresh token con `sameSite: "lax"` ([backend/src/modules/auth/auth.routes.ts](backend/src/modules/auth/auth.routes.ts)). **Frontend y backend deben quedar detrás del mismo origen** (mismo dominio y protocolo) a través de un reverse proxy que enrute `/api/*` al backend y todo lo demás a los archivos estáticos del frontend. Si los sirves en dominios distintos sin ajustar esto, el login se rompe.
@@ -184,9 +188,9 @@ El backend ya hace `app.set("trust proxy", 1)` ([backend/src/app.ts](backend/src
                  └─────────┬──────────┘
                     /api/* │ proxy (netlify.toml)
                             ▼
-                 ┌───────────────────┐        ┌──────────────┐
-                 │  Render (backend)  │───────▶│  Cloudflare R2│ fotos
-                 │  free web service  │        └──────────────┘
+                 ┌───────────────────┐        ┌───────────────────┐
+                 │  Render (backend)  │───────▶│  Supabase Storage  │ fotos
+                 │  free web service  │        └───────────────────┘
                  └─────────┬──────────┘
                             ▼
                  ┌───────────────────┐
@@ -207,7 +211,7 @@ El truco que evita tocar código de autenticación: [netlify.toml](netlify.toml)
    - **Build command**: `npm ci && npm run build`
    - **Start command**: `npm run start`
    - **Instance type**: Free
-4. En **Environment**, agrega todas las variables de la sección 1 (`DATABASE_URL`, `CORS_ORIGIN`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `R2_*`, etc.). `NODE_ENV=production`. No definas `PORT` — Render lo inyecta automáticamente y el backend ya lo lee de `process.env.PORT` ([backend/src/config/env.ts](backend/src/config/env.ts)).
+4. En **Environment**, agrega todas las variables de la sección 1 (`DATABASE_URL`, `CORS_ORIGIN`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `STORAGE_*`, etc.). `NODE_ENV=production`. No definas `PORT` — Render lo inyecta automáticamente y el backend ya lo lee de `process.env.PORT` ([backend/src/config/env.ts](backend/src/config/env.ts)).
 5. Deploy. Copia la URL que te da Render (`https://aquiayudamosve-backend.onrender.com` o similar).
 6. Corre las migraciones una vez, desde tu máquina apuntando a la `DATABASE_URL` de producción:
    ```bash
@@ -230,7 +234,7 @@ Necesitas un MySQL accesible por TCP desde fuera (PlanetScale cerró su plan gra
 
 ### B.5. Verificación end-to-end
 
-Después de desplegar ambos lados: abre el sitio de Netlify, regístrate, crea un reporte, y sube una foto de evidencia — confirma que la imagen se ve (viene de la URL pública de R2) y que el login persiste al recargar (confirma que la cookie cross-proxy funciona).
+Después de desplegar ambos lados: abre el sitio de Netlify, regístrate, crea un reporte, y sube una foto de evidencia — confirma que la imagen se ve (viene de la URL pública de Supabase Storage) y que el login persiste al recargar (confirma que la cookie cross-proxy funciona).
 
 ---
 
@@ -246,7 +250,7 @@ El backend expone `GET /api/health` → `{ status: "ok", time: "<ISO>" }` ([back
 - [ ] `CORS_ORIGIN` apunta al origen público real del frontend
 - [ ] `npx prisma migrate status` sin migraciones pendientes; luego `npx prisma migrate deploy`
 - [ ] Frontend y backend accesibles bajo el **mismo origen** (Nginx en Opción A, proxy de `netlify.toml` en Opción B)
-- [ ] Variables `R2_*` configuradas y probadas subiendo una foto real
+- [ ] Variables `STORAGE_*` configuradas y probadas subiendo una foto real
 - [ ] `GET /api/health` responde `200` tras el despliegue
 
 Puedes automatizar buena parte de esta validación con los subagentes en [.claude/agents/](.claude/agents/) (`backend-validator`, `frontend-validator`, `deploy-readiness`) desde Claude Code.
@@ -259,4 +263,4 @@ cd backend && npm ci && cp .env.example .env && npx prisma migrate dev && npm ru
 cd frontend && npm ci && npm run dev   # http://localhost:5173, proxy /api -> :4000
 ```
 
-Las variables `R2_*` pueden quedar vacías en local si no vas a probar la subida de fotos — solo se validan cuando se usa esa funcionalidad.
+Las variables `STORAGE_*` pueden quedar vacías en local si no vas a probar la subida de fotos — solo se validan cuando se usa esa funcionalidad.
