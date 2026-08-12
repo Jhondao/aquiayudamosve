@@ -101,7 +101,10 @@ export default function HomePage() {
             >
               <span className="font-bold text-danger">MÁS URGENTE SIN CONFIRMAR: </span>
               <span className="text-slate-200">
-                {summary.urgent.title} · {summary.urgent.approxLocationText}
+                {summary.urgent.title}
+                {summary.urgent.approxLocationText && summary.urgent.approxLocationText !== summary.urgent.title
+                  ? ` · ${summary.urgent.approxLocationText}`
+                  : ""}
               </span>
             </button>
           )}
