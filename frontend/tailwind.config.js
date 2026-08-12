@@ -13,6 +13,7 @@ export default {
         danger: "#d84a3d",
         safe: "#3f9d5e",
         warn: "#d99a2b",
+        brand: "#4beb9b",
       },
     },
   },
