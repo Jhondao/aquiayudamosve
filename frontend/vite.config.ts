@@ -13,6 +13,10 @@ export default defineConfig({
       // cachean agresivamente porque no cambian.
       workbox: {
         navigateFallback: "/index.html",
+        // Agrega los listeners de push/notificationclick al mismo service
+        // worker sin salirnos del modo generateSW (más simple que armar uno
+        // a mano con injectManifest).
+        importScripts: ["push-sw.js"],
         runtimeCaching: [
           {
             urlPattern: ({ url }) => url.pathname.startsWith("/api/"),

@@ -5,6 +5,7 @@ import { MapView } from "../components/MapView";
 import { ReportCard } from "../components/ReportCard";
 import type { CategoryGroup, Report } from "../types";
 import { useAuth } from "../context/AuthContext";
+import { PushToggle } from "../components/PushToggle";
 
 // Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí.
 const CITIES = ["Cali"];
@@ -141,6 +142,10 @@ export default function HomePage() {
         >
           Necesito ayuda
         </button>
+      </div>
+
+      <div className="mt-3">
+        <PushToggle />
       </div>
 
       {questionedCount > 0 && (

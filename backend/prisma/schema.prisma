@@ -276,3 +276,14 @@ model SecurityEvent {
   @@index([type])
   @@index([createdAt])
 }
+
+// Suscripción a notificaciones push del navegador — no requiere cuenta
+// (mismo criterio que reportar sin login): cualquier visitante puede
+// activarlas desde su dispositivo.
+model PushSubscription {
+  id        String   @id @default(uuid())
+  endpoint  String   @unique
+  p256dh    String
+  auth      String
+  createdAt DateTime @default(now())
+}

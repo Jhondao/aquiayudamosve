@@ -5,6 +5,7 @@ import { coarsenCoordinates, haversineMeters } from "../../utils/geo";
 import { applyDecay, determineTrustLevel, recomputeReportTrustScore, trustLevelCopy } from "../trust/trustScore.service";
 import { rewardUsefulConfirmation } from "../trust/reputation.service";
 import { SENSITIVE_CATEGORY_KEYS } from "./reports.schemas";
+import { broadcastPush } from "../../lib/push";
 
 const reportWithRelations = Prisma.validator<Prisma.ReportDefaultArgs>()({
   include: {
@@ -149,6 +150,16 @@ export async function createReport(
   await prisma.auditLog.create({
     data: { actorId: userId, action: "report.create", entityType: "report", entityId: report.id },
   });
+
+  if (category.group === "critico") {
+    // No bloquea la respuesta al usuario — el envío de push no debe
+    // demorar ni tumbar la publicación del reporte si falla.
+    broadcastPush({
+      title: `⚠️ ${category.label}`,
+      body: report.title,
+      url: `/reporte/${report.id}`,
+    }).catch(() => {});
+  }
 
   return serializeReport(report);
 }

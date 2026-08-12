@@ -139,6 +139,10 @@ export const api = {
 
   getOrganizations: () => request<{ organizations: { id: string; name: string; type: string; verified: boolean }[] }>("/api/organizations"),
   verifyOrganization: (id: string) => request(`/api/organizations/${id}/verify`, { method: "POST" }),
+
+  getPushPublicKey: () => request<{ publicKey: string }>("/api/push/vapid-public-key"),
+  pushSubscribe: (sub: PushSubscriptionJSON) => request<{ ok: true }>("/api/push/subscribe", { method: "POST", body: JSON.stringify(sub) }),
+  pushUnsubscribe: (endpoint: string) => request<{ ok: true }>("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) }),
 };
 
 export { ApiError };

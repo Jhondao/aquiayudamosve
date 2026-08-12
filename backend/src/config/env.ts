@@ -26,4 +26,9 @@ export const env = {
   storageSecretAccessKey: process.env.STORAGE_SECRET_ACCESS_KEY,
   storageBucket: process.env.STORAGE_BUCKET,
   storagePublicUrl: process.env.STORAGE_PUBLIC_URL,
+  // Solo para notificaciones push — validado al usarse, no al arrancar
+  // (ver lib/push.ts), así que dev/tests no necesitan tenerlas configuradas.
+  vapidPublicKey: process.env.VAPID_PUBLIC_KEY,
+  vapidPrivateKey: process.env.VAPID_PRIVATE_KEY,
+  vapidContact: process.env.VAPID_CONTACT ?? "mailto:contacto@aquiayudamosve.org",
 };

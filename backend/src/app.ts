@@ -13,6 +13,7 @@ import reportsRoutes from "./modules/reports/reports.routes";
 import moderationRoutes from "./modules/moderation/moderation.routes";
 import organizationsRoutes from "./modules/organizations/organizations.routes";
 import usersRoutes from "./modules/users/users.routes";
+import pushRoutes from "./modules/push/push.routes";
 
 export function createApp() {
   const app = express();
@@ -57,6 +58,7 @@ export function createApp() {
   app.use("/api/admin", moderationRoutes);
   app.use("/api/organizations", organizationsRoutes);
   app.use("/api/users", usersRoutes);
+  app.use("/api/push", pushRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);
