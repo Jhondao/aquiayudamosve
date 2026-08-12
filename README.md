@@ -1,12 +1,20 @@
 # AquiAyudamosVE
 
-Plataforma web para reportar y encontrar ayuda y necesidades durante una emergencia — nacida en respuesta al terremoto de agosto de 2026 en Cali, Colombia. Los usuarios publican reportes geolocalizados de ayuda disponible o necesidades críticas; la comunidad los confirma o los marca como incorrectos, y un sistema de reputación/confianza prioriza la información más fiable y hace decaer la que queda sin confirmar por mucho tiempo.
+Ayuda donde más hace falta: plataforma para coordinar albergues, centros de acopio y necesidades tras el terremoto de agosto de 2026 en Cali, Colombia. Cualquiera puede reportar o pedir ayuda **sin crear cuenta**; la comunidad confirma o marca como incorrecta la información publicada, y un sistema de reputación/confianza prioriza lo más fiable y hace decaer lo que lleva mucho tiempo sin confirmar.
 
 **En producción:** [aquiayudamosve.netlify.app](https://aquiayudamosve.netlify.app)
 
 ## Por qué existe
 
-Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuáles ya están saturados, y qué se necesita exactamente en cada uno, cambia cada pocos minutos y se dispersa en redes sociales, chats de WhatsApp y páginas improvisadas. AquiAyudamosVE intenta darle a esa información una estructura que se pueda filtrar por categoría y ciudad, ver en un mapa, y — lo más importante — mantener actualizada mediante confirmaciones de la propia comunidad en vez de depender de que alguien la edite a mano.
+Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuáles ya están saturados, y qué se necesita exactamente en cada uno, cambia cada pocos minutos y se dispersa en redes sociales, chats de WhatsApp y páginas improvisadas. AquiAyudamosVE le da a esa información una estructura que se puede filtrar por categoría y ciudad, ver en un mapa, y — lo más importante — mantener actualizada mediante confirmaciones de la propia comunidad en vez de depender de que alguien la edite a mano.
+
+La home no es una lista genérica de reportes: está organizada como un panel de situación —
+
+1. **Situación actual**: conteo en vivo de centros de acopio, albergues, necesidades y solicitudes de transporte.
+2. **Mapa** con todos los puntos, cada uno con su categoría visible sin necesidad de hacer clic.
+3. **Necesidades urgentes**: ranking automático por volumen de reportes reales (no una lista fija).
+4. **¿Cómo puedes ayudar?**: accesos directos por tipo de ayuda (donaciones, transporte, voluntariado).
+5. **Todos los reportes**: la lista completa, filtrable, con las acciones de "Pedir ayuda" / "Reportar un punto".
 
 ## Stack
 
@@ -17,18 +25,19 @@ Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuál
 
 ## Funcionalidad principal
 
-- Reportes geolocalizados por categoría (ayuda, necesidad, crítico, info), visibles en un mapa (Leaflet) y filtrables por ciudad/categoría
-- Autenticación con JWT (access token en memoria, refresh token en cookie httpOnly — nunca en localStorage, para reducir el impacto de un XSS)
+- Reportar y pedir ayuda **sin cuenta**: basta correo + celular; por debajo se crea un usuario "guest" (sin contraseña) que luego se puede reclamar registrándose con ese mismo correo ([backend/src/modules/reports/reports.service.ts](backend/src/modules/reports/reports.service.ts))
+- Reportes geolocalizados por categoría (ayuda, necesidad, crítico, info), visibles en el mapa con su categoría como etiqueta y filtrables por ciudad/categoría
 - Confirmación comunitaria de reportes (confirmar / dudoso / incorrecto) y sistema de reputación (nuevo → colaborador → colaborador confiable → voluntario verificado → organización → entidad institucional)
 - Decaimiento de confianza (`STALE_HOURS_THRESHOLD`): un reporte sin confirmar por varias horas pierde puntaje automáticamente, para que la info vieja no aparente ser tan confiable como la reciente
+- Actualizaciones sobre un reporte ya publicado (ej. "evacuación ordenada", "ya no se necesita más de esto") sin tener que crear uno nuevo
 - Evidencia en reportes: foto (procesada con `sharp` — se le quita el EXIF/GPS antes de subirla) y/o enlace de fuente externa
-- Moderación: reportes marcados, panel de administración, registro de auditoría
+- Moderación: reportes marcados, panel de administración con vista de **todos** los reportes (no solo denunciados), acciones de ocultar / marcar falso / marcar no vigente / eliminar, registro de auditoría
 
 ## Estructura de datos y contenido
 
 Las categorías del catálogo (`backend/prisma/seed.ts`, tabla `ReportCategory`) sí son datos reales del producto — corren en cualquier entorno. **El resto de `seed.ts` (usuarios y reportes de ejemplo) es solo para desarrollo local**, con contraseñas hardcodeadas y públicas en el código: no lo corras contra una base de producción (ver advertencia en [Base de datos](#base-de-datos) más abajo).
 
-La base de producción también incluye un lote de reportes de puntos críticos en Cali agregados manualmente. Sus coordenadas se geocodificaron por dirección con Nominatim (OpenStreetMap) — quedan a nivel de calle/barrio, no del edificio exacto. Los que no tenían ninguna dirección identificable en la fuente, o cuyo geocoding dio un resultado de confianza muy baja, se eliminaron en vez de dejarlos con una ubicación inventada.
+La base de producción también incluye reportes reales de Cali (albergues, centros de acopio, edificios afectados) agregados a partir de fuentes oficiales (Alcaldía de Cali) y medios verificados, no de una sola fuente sin contrastar. Cada dirección se geocodificó con Nominatim (OpenStreetMap) y, cuando el resultado era ambiguo (nombres de calle repetidos en comunas distintas), se contrastó contra noticias reales antes de confiar en la coordenada. Los puntos sin dirección verificable se eliminaron en vez de dejarlos con una ubicación inventada.
 
 ## Desarrollo local
 
