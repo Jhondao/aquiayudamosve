@@ -2,10 +2,19 @@
 
 Guía práctica para desplegar el MVP: API en Node.js/Express + Prisma sobre MySQL, frontend estático React/Vite, y fotos de evidencia en Supabase Storage.
 
+**Estado actual: en producción**, corriendo con la Opción B de esta guía:
+
+| Componente | Dónde | URL / referencia |
+|---|---|---|
+| Frontend | Netlify | https://aquiayudamosve.netlify.app |
+| Backend | Render (free) | https://aquiayudamosve.onrender.com |
+| Base de datos | Aiven MySQL (free) | ver sección B.3 |
+| Fotos de evidencia | Supabase Storage (free) | ver sección 2 |
+
 Hay dos rutas documentadas. Elige una:
 
-- **Opción A — VPS propio** (Hostinger VPS, Hetzner, etc.): todo en un servidor, mismo origen vía Nginx. Sin costos variables, control total.
-- **Opción B — Gratis** (Netlify + Render + MySQL gestionado gratis): sin servidor propio, capas gratuitas de varios proveedores. Backend gratis se "duerme" tras inactividad (cold start ~1 min).
+- **Opción A — VPS propio** (Hostinger VPS, Hetzner, etc.): todo en un servidor, mismo origen vía Nginx. Sin costos variables, control total. No se usa actualmente; queda documentada como alternativa si el proyecto crece más allá de lo que sostienen las capas gratuitas.
+- **Opción B — Gratis** (Netlify + Render + MySQL gestionado gratis): sin servidor propio, capas gratuitas de varios proveedores. **Es la que corre hoy.** Backend gratis se "duerme" tras inactividad (cold start ~1 min); base de datos y storage se pausan tras varios días sin uso (hay que reanudarlos a mano desde sus dashboards).
 
 Ambas opciones comparten: variables de entorno (sección 1), Supabase Storage para fotos (sección 2), y migraciones de base de datos (sección 3).
 
