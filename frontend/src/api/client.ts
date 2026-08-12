@@ -111,6 +111,8 @@ export const api = {
     approxLocationText: string;
     lat: number;
     lng: number;
+    email?: string;
+    phone?: string;
   }) => request<Report>("/api/reports", { method: "POST", body: JSON.stringify(data) }),
   confirmReport: (id: string, type: "confirm" | "unsure" | "incorrect") =>
     request<Report>(`/api/reports/${id}/confirm`, { method: "POST", body: JSON.stringify({ type }) }),

@@ -79,10 +79,50 @@ async function loadReport(id: string) {
   return report;
 }
 
+/**
+ * Publishing without a session is allowed (community-first: no signup wall
+ * to ask for help or report). We still need a stable identity to attach the
+ * report to for the trust/reputation system, so an email+phone pair either
+ * reuses or creates a passwordless "guest" User. If the email already
+ * belongs to a real account, we refuse — otherwise anyone could post under
+ * someone else's identity just by typing their email.
+ */
+async function resolveGuestContact(email: string, phone: string) {
+  const existing = await prisma.user.findUnique({ where: { email } });
+  if (existing) {
+    if (!existing.isGuest) {
+      throw new HttpError(409, "Ese correo ya tiene una cuenta. Inicia sesión para publicar con ella.");
+    }
+    if (existing.phone !== phone) {
+      await prisma.user.update({ where: { id: existing.id }, data: { phone } });
+    }
+    return existing.id;
+  }
+
+  const created = await prisma.user.create({
+    data: {
+      email,
+      phone,
+      isGuest: true,
+      displayName: email.split("@")[0],
+      reputation: { create: { score: 0, level: "nuevo" } },
+    },
+  });
+  return created.id;
+}
+
 export async function createReport(
-  userId: string,
+  actor: { userId?: string; email?: string; phone?: string },
   input: { categoryKey: string; title: string; description: string; city: string; approxLocationText: string; lat: number; lng: number }
 ) {
+  let userId = actor.userId;
+  if (!userId) {
+    if (!actor.email || !actor.phone) {
+      throw new HttpError(400, "Agrega tu correo y celular para publicar sin cuenta.");
+    }
+    userId = await resolveGuestContact(actor.email, actor.phone);
+  }
+
   const category = await prisma.reportCategory.findUnique({ where: { key: input.categoryKey } });
   if (!category || !category.active) throw new HttpError(400, "Categoría inválida.");
 

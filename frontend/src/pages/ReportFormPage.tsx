@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { GuestContactFields } from "../components/GuestContactFields";
 import type { Category, Report } from "../types";
 
 const CITIES = ["Cali", "Pereira", "Manizales", "Armenia", "Quibdó"];
@@ -29,6 +30,8 @@ export default function ReportFormPage() {
   const [nearby, setNearby] = useState<Report[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
 
   useEffect(() => {
     api.getCategories().then((res) => setCategories(res.categories));
@@ -57,27 +60,29 @@ export default function ReportFormPage() {
     );
   }
 
-  if (!profile) {
-    return (
-      <div className="mx-auto max-w-md px-4 py-10 text-center">
-        <p className="text-sm text-slate-400">Debes iniciar sesión para publicar un reporte.</p>
-        <button onClick={() => navigate("/login")} className="mt-3 rounded-xl bg-accent px-5 py-2 font-bold text-white">
-          Ingresar
-        </button>
-      </div>
-    );
-  }
-
   async function submit() {
     setError(null);
     if (!categoryKey || !title.trim() || !description.trim() || !city || !locationText.trim()) {
       setError("Completa todos los campos obligatorios.");
       return;
     }
+    if (!profile && (!email.trim() || !phone.trim())) {
+      setError("Agrega tu correo y celular, o inicia sesión.");
+      return;
+    }
     setSubmitting(true);
     try {
       const [lat, lng] = coords ?? CITY_CENTER[city];
-      const report = await api.createReport({ categoryKey, title, description, city, approxLocationText: locationText, lat, lng });
+      const report = await api.createReport({
+        categoryKey,
+        title,
+        description,
+        city,
+        approxLocationText: locationText,
+        lat,
+        lng,
+        ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
+      });
       navigate(`/reporte/${report.id}`);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo publicar el reporte.");
@@ -181,17 +186,19 @@ export default function ReportFormPage() {
               <span className="flex-1">{r.title}</span>
               <button
                 onClick={async () => {
-                  await api.confirmReport(r.id, "confirm");
+                  if (profile) await api.confirmReport(r.id, "confirm").catch(() => undefined);
                   navigate(`/reporte/${r.id}`);
                 }}
                 className="rounded-lg border border-border px-2.5 py-1 text-xs font-semibold"
               >
-                CONFIRMAR EXISTENTE
+                {profile ? "CONFIRMAR EXISTENTE" : "VER REPORTE"}
               </button>
             </div>
           ))}
         </div>
       )}
+
+      {!profile && <GuestContactFields email={email} setEmail={setEmail} phone={phone} setPhone={setPhone} />}
 
       {error && <p className="mt-4 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
 

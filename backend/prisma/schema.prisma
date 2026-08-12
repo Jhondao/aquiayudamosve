@@ -47,7 +47,12 @@ enum ConfirmationType {
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
-  passwordHash      String
+  phone             String?
+  // Null for accounts auto-created from a guest report (email + phone, no
+  // password) — see reports.service.ts#resolveGuestContact. isGuest tells
+  // login/register apart from a real account sharing the same email.
+  passwordHash      String?
+  isGuest           Boolean  @default(false)
   displayName       String
   role              UserRole @default(citizen)
   organizationId    String?

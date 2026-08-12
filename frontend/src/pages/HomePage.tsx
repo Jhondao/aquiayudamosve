@@ -126,14 +126,21 @@ export default function HomePage() {
         </select>
         <button
           onClick={() => navigate("/necesito-ayuda")}
-          className="h-11 flex-1 rounded-xl bg-danger px-4 text-sm font-bold text-white"
+          className="flex h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-danger px-4 text-base font-extrabold tracking-wide text-white shadow-lg shadow-danger/30 transition active:scale-[0.98] sm:h-12 sm:text-sm"
         >
+          <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.3 2.25h17.76a1.5 1.5 0 0 0 1.3-2.25L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
+          </svg>
           NECESITO AYUDA
         </button>
         <button
           onClick={() => navigate("/reportar")}
-          className="h-11 flex-1 rounded-xl bg-accent px-4 text-sm font-bold text-white"
+          className="flex h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-accent px-4 text-base font-extrabold tracking-wide text-white shadow-lg shadow-accent/30 transition active:scale-[0.98] sm:h-12 sm:text-sm"
         >
+          <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+            <path strokeLinecap="round" strokeLinejoin="round" d="M12 21c4-4.5 7-8.14 7-11.5A7 7 0 0 0 5 9.5C5 12.86 8 16.5 12 21Z" />
+            <circle cx="12" cy="9.5" r="2.5" strokeLinecap="round" strokeLinejoin="round" />
+          </svg>
           QUIERO REPORTAR
         </button>
       </div>
