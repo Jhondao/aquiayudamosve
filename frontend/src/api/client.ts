@@ -124,8 +124,14 @@ export const api = {
   myReports: () => request<{ profile: Profile; reports: Partial<Report>[] }>("/api/users/me/reports"),
 
   getFlaggedReports: () => request<{ reports: Report[] }>("/api/admin/reports/flagged"),
-  moderateReport: (id: string, action: "hide" | "unhide" | "markFalse", reason: string) =>
-    request<Report>(`/api/admin/reports/${id}`, { method: "PATCH", body: JSON.stringify({ action, reason }) }),
+  getAllReports: (params: { city?: string; status?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.city) qs.set("city", params.city);
+    if (params.status) qs.set("status", params.status);
+    return request<{ reports: Report[] }>(`/api/admin/reports?${qs.toString()}`);
+  },
+  moderateReport: (id: string, action: "hide" | "unhide" | "markFalse" | "resolve" | "delete", reason: string) =>
+    request<Report | null>(`/api/admin/reports/${id}`, { method: "PATCH", body: JSON.stringify({ action, reason }) }),
   getAuditLogs: () =>
     request<{ logs: { id: string; action: string; entityType: string; entityId: string; createdAt: string; actor: { displayName: string } | null }[] }>(
       "/api/admin/audit-logs"

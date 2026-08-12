@@ -24,6 +24,22 @@ export async function listFlaggedReports() {
   return reports.map(serializeReport);
 }
 
+// Unlike the public /api/reports listing, this is not limited to
+// active/inactive — moderators need to see hidden reports here too, and
+// nothing is paginated since admin review is expected to look at everything.
+export async function listAllReports(filters: { city?: string; status?: string }) {
+  const reports = await prisma.report.findMany({
+    where: {
+      deletedAt: null,
+      ...(filters.city ? { city: filters.city } : {}),
+      ...(filters.status ? { status: filters.status as never } : {}),
+    },
+    include: reportInclude,
+    orderBy: { createdAt: "desc" },
+  });
+  return reports.map(serializeReport);
+}
+
 async function recordAction(adminId: string, action: string, reportId: string, reason: string) {
   await prisma.moderationAction.create({
     data: { adminId, action, targetType: "report", targetId: reportId, reason },
@@ -35,7 +51,12 @@ async function recordAction(adminId: string, action: string, reportId: string, r
   });
 }
 
-export async function moderateReport(adminId: string, reportId: string, action: "hide" | "unhide" | "markFalse", reason: string) {
+export async function moderateReport(
+  adminId: string,
+  reportId: string,
+  action: "hide" | "unhide" | "markFalse" | "resolve" | "delete",
+  reason: string
+) {
   const report = await prisma.report.findUnique({ where: { id: reportId } });
   if (!report || report.deletedAt) throw new HttpError(404, "Reporte no encontrado.");
 
@@ -49,9 +70,19 @@ export async function moderateReport(adminId: string, reportId: string, action: 
       prisma.reportFlag.updateMany({ where: { reportId }, data: { resolved: true } }),
     ]);
     await penalizeForFalseInformation(report.createdById);
+  } else if (action === "resolve") {
+    // Not "wrong", just no longer current (need met, shelter closed, etc.) —
+    // distinct from hide/markFalse, which are trust/accuracy judgments.
+    await prisma.report.update({ where: { id: reportId }, data: { status: "inactive" } });
+  } else if (action === "delete") {
+    // Soft delete (same pattern as User/Organization) — the row stays for
+    // the audit trail, but disappears from every listing immediately.
+    await prisma.report.update({ where: { id: reportId }, data: { deletedAt: new Date() } });
   }
 
   await recordAction(adminId, action, reportId, reason);
+
+  if (action === "delete") return null;
 
   const updated = await prisma.report.findUniqueOrThrow({ where: { id: reportId }, include: reportInclude });
   return serializeReport(updated);

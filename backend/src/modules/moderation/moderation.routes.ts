@@ -1,8 +1,8 @@
 import { Router } from "express";
 import { requireAuth, requireRole } from "../../middleware/auth";
-import { validateBody } from "../../middleware/validate";
-import { listAuditLog, listFlaggedReports, moderateReport } from "./moderation.service";
-import { moderationActionSchema } from "./moderation.schemas";
+import { validateBody, validateQuery } from "../../middleware/validate";
+import { listAllReports, listAuditLog, listFlaggedReports, moderateReport } from "./moderation.service";
+import { listAllReportsQuerySchema, moderationActionSchema } from "./moderation.schemas";
 
 const router = Router();
 
@@ -11,6 +11,14 @@ router.use(requireAuth, requireRole("moderator", "admin"));
 router.get("/reports/flagged", async (_req, res, next) => {
   try {
     res.json({ reports: await listFlaggedReports() });
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/reports", validateQuery(listAllReportsQuerySchema), async (req, res, next) => {
+  try {
+    res.json({ reports: await listAllReports(req.query as never) });
   } catch (err) {
     next(err);
   }
