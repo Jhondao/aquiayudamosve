@@ -151,11 +151,12 @@ export async function createReport(
     data: { actorId: userId, action: "report.create", entityType: "report", entityId: report.id },
   });
 
-  if (category.group === "critico") {
+  const PUSH_GROUPS: Record<string, string> = { critico: "⚠️", necesidad: "🆘" };
+  if (PUSH_GROUPS[category.group]) {
     // No bloquea la respuesta al usuario — el envío de push no debe
     // demorar ni tumbar la publicación del reporte si falla.
     broadcastPush({
-      title: `⚠️ ${category.label}`,
+      title: `${PUSH_GROUPS[category.group]} ${category.label}`,
       body: report.title,
       url: `/reporte/${report.id}`,
     }).catch(() => {});

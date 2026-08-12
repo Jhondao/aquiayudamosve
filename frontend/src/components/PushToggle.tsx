@@ -100,14 +100,14 @@ export function PushToggle() {
     return (
       <p className="text-xs text-slate-500">
         🔕 Bloqueaste las notificaciones de este sitio en tu navegador — actívalas desde la configuración del sitio si
-        quieres recibir avisos de puntos críticos nuevos.
+        quieres recibir avisos de puntos críticos y necesidades nuevas.
       </p>
     );
   }
 
   return (
     <div>
-      {status === "on" && <p className="mb-1.5 text-xs text-safe">✅ Avisos de puntos críticos activados</p>}
+      {status === "on" && <p className="mb-1.5 text-xs text-safe">✅ Avisos de puntos críticos y necesidades activados</p>}
       <button
         onClick={() => (status === "on" ? disable() : enable())}
         disabled={busy}
@@ -117,7 +117,7 @@ export function PushToggle() {
             : "border-border bg-surface text-slate-200 hover:bg-surface2"
         }`}
       >
-        {status === "on" ? "🔕 Desactivar avisos" : "🔔 Avisar de puntos críticos nuevos"}
+        {status === "on" ? "🔕 Desactivar avisos" : "🔔 Avisar de críticos y necesidades nuevas"}
       </button>
       {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
     </div>
