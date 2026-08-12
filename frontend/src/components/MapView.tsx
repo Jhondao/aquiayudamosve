@@ -51,7 +51,6 @@ export function MapView({
               fillOpacity: 0.85,
               weight: r.organization ? 3 : 1,
             }}
-            eventHandlers={{ click: () => onSelect(r.id) }}
           >
             <Popup>
               <div className="max-w-[220px] text-sm">
