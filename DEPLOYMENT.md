@@ -208,10 +208,12 @@ El truco que evita tocar código de autenticación: [netlify.toml](netlify.toml)
 2. **New** → **Web Service**, selecciona el repo.
 3. Configura:
    - **Root directory**: `backend`
-   - **Build command**: `npm ci && npm run build`
+   - **Build command**: `npm ci --include=dev && npm run build`
    - **Start command**: `npm run start`
    - **Instance type**: Free
 4. En **Environment**, agrega todas las variables de la sección 1 (`DATABASE_URL`, `CORS_ORIGIN`, `JWT_ACCESS_SECRET`, `JWT_REFRESH_SECRET`, `STORAGE_*`, etc.). `NODE_ENV=production`. No definas `PORT` — Render lo inyecta automáticamente y el backend ya lo lee de `process.env.PORT` ([backend/src/config/env.ts](backend/src/config/env.ts)).
+
+   **Ojo con `--include=dev`:** es obligatorio aquí. Con `NODE_ENV=production` seteado (necesario para runtime), `npm ci` por defecto omite las devDependencies — y `typescript` es una devDependency que el build (`tsc -p tsconfig.json`) necesita. Sin `--include=dev`, Render cae a un `tsc` distinto (de la imagen base) que puede tener una versión incompatible con `tsconfig.json` y fallar con errores confusos que no se reproducen en local.
 5. Deploy. Copia la URL que te da Render (`https://aquiayudamosve-backend.onrender.com` o similar).
 6. Corre las migraciones una vez, desde tu máquina apuntando a la `DATABASE_URL` de producción:
    ```bash
