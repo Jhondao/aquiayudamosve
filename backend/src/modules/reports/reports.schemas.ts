@@ -1,6 +1,8 @@
 import { z } from "zod";
 
-export const CITIES = ["Cali", "Pereira", "Manizales", "Armenia", "Quibdó"] as const;
+// Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí
+// (Pereira, Manizales, Armenia, Quibdó) cuando el proyecto se expanda.
+export const CITIES = ["Cali"] as const;
 
 // Categories flagged as potentially exposing vulnerable people (section 24).
 export const SENSITIVE_CATEGORY_KEYS = new Set([

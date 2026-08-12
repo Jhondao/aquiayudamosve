@@ -5,7 +5,8 @@ import { useAuth } from "../context/AuthContext";
 import { GuestContactFields } from "../components/GuestContactFields";
 import type { Category, Report } from "../types";
 
-const CITIES = ["Cali", "Pereira", "Manizales", "Armenia", "Quibdó"];
+// Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí.
+const CITIES = ["Cali"];
 const CITY_CENTER: Record<string, [number, number]> = {
   Cali: [3.4516, -76.532],
   Pereira: [4.8087, -75.6906],

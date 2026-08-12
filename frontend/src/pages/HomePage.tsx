@@ -6,7 +6,8 @@ import { ReportCard } from "../components/ReportCard";
 import type { CategoryGroup, Report } from "../types";
 import { useAuth } from "../context/AuthContext";
 
-const CITIES = ["Cali", "Pereira", "Manizales", "Armenia", "Quibdó"];
+// Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí.
+const CITIES = ["Cali"];
 const GROUP_FILTERS: { key: CategoryGroup | "todos" | "institucional"; label: string }[] = [
   { key: "todos", label: "Todos" },
   { key: "ayuda", label: "Ayuda" },
