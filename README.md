@@ -28,7 +28,7 @@ Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuál
 
 Las categorías del catálogo (`backend/prisma/seed.ts`, tabla `ReportCategory`) sí son datos reales del producto — corren en cualquier entorno. **El resto de `seed.ts` (usuarios y reportes de ejemplo) es solo para desarrollo local**, con contraseñas hardcodeadas y públicas en el código: no lo corras contra una base de producción (ver advertencia en [Base de datos](#base-de-datos) más abajo).
 
-La base de producción también incluye un lote de reportes de puntos críticos en Cali agregados manualmente. Sus coordenadas se geocodificaron por dirección con Nominatim (OpenStreetMap) cuando había una dirección o barrio identificable — quedan a nivel de calle, no del edificio exacto. Los pocos sin ninguna referencia de ubicación quedan con una coordenada aproximada dentro de la ciudad.
+La base de producción también incluye un lote de reportes de puntos críticos en Cali agregados manualmente. Sus coordenadas se geocodificaron por dirección con Nominatim (OpenStreetMap) — quedan a nivel de calle/barrio, no del edificio exacto. Los que no tenían ninguna dirección identificable en la fuente, o cuyo geocoding dio un resultado de confianza muy baja, se eliminaron en vez de dejarlos con una ubicación inventada.
 
 ## Desarrollo local
 
