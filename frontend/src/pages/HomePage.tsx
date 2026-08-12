@@ -5,6 +5,7 @@ import { MapView } from "../components/MapView";
 import { ReportCard } from "../components/ReportCard";
 import type { CategoryGroup, Report } from "../types";
 import { useAuth } from "../context/AuthContext";
+import { relativeTime } from "../utils/time";
 
 const CITIES = ["Cali", "Pereira", "Manizales", "Armenia", "Quibdó"];
 const GROUP_FILTERS: { key: CategoryGroup | "todos" | "institucional"; label: string }[] = [
@@ -48,6 +49,20 @@ export default function HomePage() {
 
   const mapCity = useMemo(() => city || reports[0]?.city, [city, reports]);
 
+  const summary = useMemo(() => {
+    if (reports.length === 0) return null;
+    const criticalCount = reports.filter((r) => r.category.group === "critico").length;
+    const questionedCount = reports.filter((r) => r.trustLevel === "cuestionada").length;
+    const urgent = reports
+      .filter((r) => r.category.group === "critico" && r.confirmationsCount === 0)
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime())[0];
+    const lastUpdate = reports.reduce(
+      (latest, r) => (new Date(r.lastConfirmedAt) > new Date(latest) ? r.lastConfirmedAt : latest),
+      reports[0].lastConfirmedAt
+    );
+    return { total: reports.length, criticalCount, questionedCount, urgent, lastUpdate };
+  }, [reports]);
+
   async function handleConfirm(id: string) {
     if (!profile) return navigate("/login");
     try {
@@ -64,6 +79,34 @@ export default function HomePage() {
       <p className="mt-1 text-sm text-slate-400">
         Información comunitaria sobre el terremoto del 10 de agosto en Cali, Pereira, Manizales, Armenia y Quibdó.
       </p>
+
+      {summary && (
+        <div className="mt-3 space-y-2">
+          <p className="text-xs font-semibold text-slate-400">
+            {summary.total} reporte{summary.total === 1 ? "" : "s"} activo{summary.total === 1 ? "" : "s"}
+            {city ? ` en ${city}` : ""} · {summary.criticalCount} crítico{summary.criticalCount === 1 ? "" : "s"} · última
+            actualización {relativeTime(summary.lastUpdate)}
+          </p>
+          {summary.questionedCount > 0 && (
+            <p className="rounded-lg bg-danger/20 px-3 py-2 text-xs font-semibold text-danger">
+              {summary.questionedCount} reporte{summary.questionedCount === 1 ? "" : "s"} marcado
+              {summary.questionedCount === 1 ? "" : "s"} como incorrecto{summary.questionedCount === 1 ? "" : "s"} por la
+              comunidad — revisa antes de confiar en {summary.questionedCount === 1 ? "él" : "ellos"}.
+            </p>
+          )}
+          {summary.urgent && (
+            <button
+              onClick={() => navigate(`/reporte/${summary.urgent!.id}`)}
+              className="block w-full rounded-lg border border-danger bg-danger/10 px-3 py-2 text-left text-xs"
+            >
+              <span className="font-bold text-danger">MÁS URGENTE SIN CONFIRMAR: </span>
+              <span className="text-slate-200">
+                {summary.urgent.title} · {summary.urgent.approxLocationText}
+              </span>
+            </button>
+          )}
+        </div>
+      )}
 
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <select
