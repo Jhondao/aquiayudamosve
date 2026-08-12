@@ -24,6 +24,7 @@ const CATEGORIES: { group: "ayuda" | "necesidad" | "critico" | "info"; key: stri
   { group: "necesidad", key: "necesidad_refugio", label: "Refugio", sortOrder: 5 },
   { group: "necesidad", key: "personas_vulnerables", label: "Personas vulnerables", sortOrder: 6 },
   { group: "necesidad", key: "rescate_requerido", label: "Rescate requerido", sortOrder: 7 },
+  { group: "necesidad", key: "necesidad_transporte", label: "Transporte", sortOrder: 8 },
   // Punto crítico
   { group: "critico", key: "edificio_afectado", label: "Edificio afectado", sortOrder: 1 },
   { group: "critico", key: "derrumbe", label: "Derrumbe", sortOrder: 2 },
