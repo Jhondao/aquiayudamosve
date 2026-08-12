@@ -13,12 +13,22 @@ const BCRYPT_ROUNDS = 12;
 
 export async function registerUser(email: string, password: string, displayName: string, req: Request) {
   const existing = await prisma.user.findUnique({ where: { email } });
+  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
+
   if (existing) {
-    // Same generic message as "user not found" cases would use — never confirm which emails exist.
-    throw new HttpError(409, "No se pudo crear la cuenta con esos datos.");
+    if (!existing.isGuest) {
+      // Same generic message as "user not found" cases would use — never confirm which emails exist.
+      throw new HttpError(409, "No se pudo crear la cuenta con esos datos.");
+    }
+    // Reports/confirmations published as a guest under this email now belong
+    // to the claimed account — no data migration needed, same User row.
+    const claimed = await prisma.user.update({
+      where: { id: existing.id },
+      data: { passwordHash, displayName, isGuest: false },
+    });
+    return issueSession(claimed.id, claimed.role, req);
   }
 
-  const passwordHash = await bcrypt.hash(password, BCRYPT_ROUNDS);
   const user = await prisma.user.create({
     data: {
       email,
@@ -35,7 +45,9 @@ export async function loginUser(email: string, password: string, req: Request) {
   const user = await prisma.user.findUnique({ where: { email } });
   const genericError = () => new HttpError(401, "Correo o contraseña incorrectos.");
 
-  if (!user || user.deletedAt) throw genericError();
+  // Guest accounts (no passwordHash) can only be accessed by registering —
+  // there's no password to check yet.
+  if (!user || user.deletedAt || !user.passwordHash) throw genericError();
 
   const valid = await bcrypt.compare(password, user.passwordHash);
   if (!valid) throw genericError();

@@ -17,6 +17,15 @@ export const createReportSchema = z.object({
   approxLocationText: z.string().trim().min(2).max(200),
   lat: z.number().gte(-90).lte(90),
   lng: z.number().gte(-180).lte(180),
+  // Only required when publishing without a session — see reports.routes.ts.
+  email: z.string().trim().toLowerCase().email().optional(),
+  phone: z
+    .string()
+    .trim()
+    .min(7)
+    .max(20)
+    .regex(/^[0-9+()\-\s]+$/, "Celular inválido.")
+    .optional(),
 });
 
 export const confirmSchema = z.object({

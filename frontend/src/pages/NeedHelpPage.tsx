@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { GuestContactFields } from "../components/GuestContactFields";
 import type { Category } from "../types";
 
 const CITIES = ["Cali", "Pereira", "Manizales", "Armenia", "Quibdó"];
@@ -24,6 +25,8 @@ export default function NeedHelpPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [email, setEmail] = useState("");
+  const [phone, setPhone] = useState("");
 
   useEffect(() => {
     api.getCategories().then((res) => setCategories(res.categories.filter((c) => c.group === "necesidad")));
@@ -31,21 +34,14 @@ export default function NeedHelpPage() {
 
   const isSensitive = SENSITIVE_KEYS.has(categoryKey);
 
-  if (!profile) {
-    return (
-      <div className="mx-auto max-w-md px-4 py-10 text-center">
-        <p className="text-sm text-slate-400">Debes iniciar sesión para publicar una solicitud de ayuda.</p>
-        <button onClick={() => navigate("/login")} className="mt-3 rounded-xl bg-accent px-5 py-2 font-bold text-white">
-          Ingresar
-        </button>
-      </div>
-    );
-  }
-
   async function submit() {
     setError(null);
     if (!categoryKey || !city) {
       setError("Selecciona el tipo de necesidad y la ciudad.");
+      return;
+    }
+    if (!profile && (!email.trim() || !phone.trim())) {
+      setError("Agrega tu correo y celular, o inicia sesión.");
       return;
     }
     setSubmitting(true);
@@ -59,6 +55,7 @@ export default function NeedHelpPage() {
         approxLocationText: "Ubicación no especificada",
         lat: CITY_CENTER[city][0],
         lng: CITY_CENTER[city][1],
+        ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
       });
       setSubmitted(true);
       setTimeout(() => navigate("/"), 1200);
@@ -115,6 +112,8 @@ export default function NeedHelpPage() {
         placeholder="Ej: familia de 4 personas sin agua desde ayer"
         className="mt-1 min-h-[90px] w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm"
       />
+
+      {!profile && <GuestContactFields email={email} setEmail={setEmail} phone={phone} setPhone={setPhone} />}
 
       {error && <p className="mt-4 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
 
