@@ -1,4 +1,4 @@
-import { CircleMarker, MapContainer, Popup, TileLayer, useMap } from "react-leaflet";
+import { CircleMarker, MapContainer, Popup, TileLayer, Tooltip, useMap } from "react-leaflet";
 import { useEffect } from "react";
 import type { Report } from "../types";
 import { GROUP_META } from "./categoryStyle";
@@ -52,9 +52,18 @@ export function MapView({
               weight: r.organization ? 3 : 1,
             }}
           >
+            <Tooltip permanent direction="top" offset={[0, -6]} className="map-tag">
+              {r.category.label}
+            </Tooltip>
             <Popup>
               <div className="max-w-[220px] text-sm">
-                <div className="font-semibold">{r.title}</div>
+                <span
+                  className="inline-block rounded-full px-2 py-0.5 text-[10px] font-bold"
+                  style={{ background: `${GROUP_META[r.category.group].markerColor}33`, color: GROUP_META[r.category.group].markerColor }}
+                >
+                  {r.category.label}
+                </span>
+                <div className="mt-1 font-semibold">{r.title}</div>
                 <div className="text-xs text-slate-500">{r.approxLocationText}</div>
                 <button
                   className="mt-1 text-xs font-semibold text-blue-600 underline"

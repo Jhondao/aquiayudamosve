@@ -18,3 +18,19 @@ body {
 .leaflet-container {
   background: #1b1e26;
 }
+
+/* Permanent category tag shown next to each map marker (dark theme —
+   Leaflet's default tooltip is a white box that clashes otherwise). */
+.leaflet-tooltip.map-tag {
+  background: #1b1e26;
+  border: 1px solid #333844;
+  color: #e5e9f0;
+  font-size: 10px;
+  font-weight: 700;
+  padding: 1px 6px;
+  border-radius: 999px;
+  box-shadow: none;
+}
+.leaflet-tooltip.map-tag::before {
+  border-top-color: #333844;
+}
