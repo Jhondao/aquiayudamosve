@@ -138,7 +138,7 @@ export default function HomePage() {
           onClick={() => mapaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" })}
           className="h-12 flex-1 rounded-xl bg-danger px-5 text-sm font-bold text-white"
         >
-          Necesito encontrar ayuda
+          Necesito ayuda
         </button>
       </div>
 
@@ -209,7 +209,7 @@ export default function HomePage() {
       {/* Cómo puedes ayudar */}
       <div ref={comoAyudarRef} className="mt-8 scroll-mt-20">
         <h2 className="text-xs font-bold uppercase tracking-wide text-slate-400">¿Cómo puedes ayudar?</h2>
-        <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
+        <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
           {HELP_ACTIONS.map((a) => (
             <button
               key={a.categoryKey}
@@ -221,13 +221,6 @@ export default function HomePage() {
               <div className="text-xs text-slate-400">{a.hint}</div>
             </button>
           ))}
-          <div className="rounded-xl border border-border bg-surface p-3">
-            <div className="text-lg">💰</div>
-            <div className="text-sm font-bold">Donaciones económicas</div>
-            <div className="text-xs text-slate-400">
-              Aún no hay organizaciones verificadas con datos de donación registrados.
-            </div>
-          </div>
         </div>
       </div>
 
@@ -255,7 +248,7 @@ export default function HomePage() {
             <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 9v4m0 4h.01M10.29 3.86 1.82 18a1.5 1.5 0 0 0 1.3 2.25h17.76a1.5 1.5 0 0 0 1.3-2.25L13.71 3.86a1.5 1.5 0 0 0-2.42 0Z" />
             </svg>
-            NECESITO AYUDA
+            PEDIR AYUDA
           </button>
           <button
             onClick={() => navigate("/reportar")}
@@ -265,7 +258,7 @@ export default function HomePage() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M12 21c4-4.5 7-8.14 7-11.5A7 7 0 0 0 5 9.5C5 12.86 8 16.5 12 21Z" />
               <circle cx="12" cy="9.5" r="2.5" strokeLinecap="round" strokeLinejoin="round" />
             </svg>
-            QUIERO REPORTAR
+            REPORTAR UN PUNTO
           </button>
         </div>
 
