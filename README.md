@@ -12,8 +12,8 @@ Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuál
 
 - **Backend**: Node.js + TypeScript + Express + Prisma + MySQL ([backend/](backend/))
 - **Frontend**: React + TypeScript + Vite + Tailwind + Leaflet (mapa) ([frontend/](frontend/))
-- **Almacenamiento de fotos**: Supabase Storage (S3-compatible) — ver [backend/src/lib/objectStorage.ts](backend/src/lib/objectStorage.ts)
-- **Despliegue actual**: Netlify (frontend) + Render (backend) + Aiven (MySQL) — ver [DEPLOYMENT.md](DEPLOYMENT.md)
+- **Almacenamiento de fotos**: Supabase Storage (S3-compatible) — [backend/src/lib/objectStorage.ts](backend/src/lib/objectStorage.ts)
+- **Despliegue actual**: Netlify (frontend) + Render (backend) + Aiven (MySQL) — ver sección [Despliegue](#despliegue) más abajo
 
 ## Funcionalidad principal
 
@@ -26,9 +26,7 @@ Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuál
 
 ## Estructura de datos y contenido
 
-Las categorías del catálogo (`backend/prisma/seed.ts`, tabla `ReportCategory`) sí son datos reales del producto — corren en cualquier entorno. **El resto de `seed.ts` (usuarios y reportes de ejemplo) es solo para desarrollo local**, con contraseñas hardcodeadas y públicas en el código: no lo corras contra una base de producción. Ver la advertencia en [DEPLOYMENT.md](DEPLOYMENT.md#3-base-de-datos).
-
-Aparte de los reportes creados por usuarios reales, la base de producción incluye un lote de reportes agregados manualmente a partir de un proyecto comunitario independiente que documentaba puntos críticos del terremoto de Cali — cada uno queda marcado con su fuente (`sourceUrl` en la evidencia) y con la ubicación explícitamente señalada como aproximada, ya que la fuente original no publicaba coordenadas.
+Las categorías del catálogo (`backend/prisma/seed.ts`, tabla `ReportCategory`) sí son datos reales del producto — corren en cualquier entorno. **El resto de `seed.ts` (usuarios y reportes de ejemplo) es solo para desarrollo local**, con contraseñas hardcodeadas y públicas en el código: no lo corras contra una base de producción (ver advertencia en [Base de datos](#base-de-datos) más abajo).
 
 ## Desarrollo local
 
@@ -50,10 +48,6 @@ Tests del backend: `cd backend && npm test` (Vitest, requiere la base de datos l
 
 Las variables `STORAGE_*` (Supabase Storage) pueden quedar vacías en local si no vas a probar la subida de fotos.
 
-## Despliegue
-
-Ver [DEPLOYMENT.md](DEPLOYMENT.md) para la guía completa: arquitectura (VPS propio o el stack gratis Netlify+Render+Aiven que corre hoy en producción), variables de entorno, migraciones, y checklist previo a cada release.
-
 ## Agentes de validación
 
 Este repo incluye subagentes de Claude Code en [.claude/agents/](.claude/agents/) — se cargan solos al abrir el proyecto en Claude Code:
@@ -61,6 +55,97 @@ Este repo incluye subagentes de Claude Code en [.claude/agents/](.claude/agents/
 - `backend-validator`: typecheck, tests, drift de Prisma, build, cobertura de env vars
 - `frontend-validator`: typecheck, build, wiring de la API, rutas, CSP del mapa
 - `deploy-readiness`: secretos filtrados, CORS, config de storage, manejo de cookies cross-origin
+
+---
+
+## Despliegue
+
+Corre hoy en producción con este stack gratuito:
+
+| Componente | Dónde | URL / referencia |
+|---|---|---|
+| Frontend | Netlify | https://aquiayudamosve.netlify.app |
+| Backend | Render (free) | https://aquiayudamosve.onrender.com |
+| Base de datos | Aiven MySQL (free) | ver [Base de datos](#base-de-datos) |
+| Fotos de evidencia | Supabase Storage (free) | ver [Fotos de evidencia](#fotos-de-evidencia) |
+
+Backend gratis se "duerme" tras 15 min sin tráfico (cold start ~1 min); base de datos y storage se pausan tras varios días sin uso (hay que reanudarlos a mano desde sus dashboards).
+
+### Variables de entorno (backend)
+
+Copia `backend/.env.example` a `backend/.env` y ajusta **todos** estos valores para producción — nunca dejes los valores de ejemplo:
+
+| Variable | Descripción | Nota de producción |
+|---|---|---|
+| `NODE_ENV` | Entorno de ejecución | `production` |
+| `PORT` | Puerto donde escucha el backend | Render lo inyecta automáticamente vía `process.env.PORT` |
+| `DATABASE_URL` | Cadena de conexión MySQL | Usuario dedicado, no root |
+| `CORS_ORIGIN` | Origen permitido para CORS | El dominio público del frontend |
+| `JWT_ACCESS_SECRET` / `JWT_REFRESH_SECRET` | Secretos de firma JWT | Generar nuevos, mínimo 32 caracteres aleatorios (`openssl rand -hex 32`). **Nunca reutilizar los valores `dev_..._change_me` de `.env.example`** |
+| `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL_DAYS` | Tiempos de expiración | Defaults razonables: `15m` / `7` días |
+| `STALE_HOURS_THRESHOLD` | Horas sin confirmación antes de que un reporte empiece a decaer | Ajustar según criterio del producto |
+| `STORAGE_ENDPOINT` / `STORAGE_REGION` / `STORAGE_ACCESS_KEY_ID` / `STORAGE_SECRET_ACCESS_KEY` / `STORAGE_BUCKET` / `STORAGE_PUBLIC_URL` | Credenciales S3 de Supabase Storage | Ver [Fotos de evidencia](#fotos-de-evidencia) |
+
+El backend valida en el arranque ([backend/src/config/env.ts](backend/src/config/env.ts)) que `DATABASE_URL`, `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` existan. Las variables `STORAGE_*` se validan solo al subir una foto ([backend/src/lib/objectStorage.ts](backend/src/lib/objectStorage.ts)), así que en dev/tests pueden quedar vacías.
+
+### Fotos de evidencia
+
+Supabase Storage (S3-compatible, gratis, sin tarjeta — a diferencia de Cloudflare R2). Configuración:
+
+1. Cuenta en [supabase.com](https://supabase.com) → proyecto nuevo.
+2. **Storage** → **Create a new bucket** → nómbralo `evidence`, márcalo **Public bucket**.
+3. **Project Settings → Storage → S3 Connection**: copia **Endpoint** y **Region** → `STORAGE_ENDPOINT` / `STORAGE_REGION`.
+4. **S3 access keys → New access key** → copia Access Key ID y Secret (solo se muestran una vez).
+5. `STORAGE_BUCKET=evidence`. `STORAGE_PUBLIC_URL=https://<project-ref>.supabase.co/storage/v1/object/public/evidence`.
+
+Caveat: un proyecto free de Supabase se pausa tras 7 días sin actividad — las fotos quedan inaccesibles hasta reanudarlo a mano en el dashboard.
+
+### Base de datos
+
+MySQL accesible por TCP desde fuera. **Aiven** funciona sin tarjeta (Northflank la pide incluso en el plan gratis).
+
+1. Cuenta en [aiven.io](https://aiven.io) (GitHub/Google, sin tarjeta) → **Create service** → **MySQL** → plan **Free** → crear.
+2. Espera a **Running** (1-2 min; el hostname no resuelve por DNS hasta entonces).
+3. **Connection information**: copia host, puerto, usuario, contraseña, base (`defaultdb`).
+4. Descarga el **CA Certificate** y guárdalo como `backend/prisma/ca.pem` (sí se commitea, es público, no un secreto).
+5. `DATABASE_URL`, con el certificado obligatorio (sin él, Prisma falla con `P1011: certificate was not trusted`):
+   ```
+   mysql://<user>:<password>@<host>:<port>/defaultdb?sslcert=ca.pem
+   ```
+6. Migraciones: `DATABASE_URL="..." npx prisma migrate deploy` — nunca `migrate dev` en producción.
+
+**`npm run seed` NO es solo para categorías.** Además del catálogo, inserta reportes falsos de demostración y usuarios de prueba con contraseñas fijas y públicas en el código (`admin@aquiayudamosve.org` / `Admin1234!`, entre otras). Como el repo es público, esas contraseñas son visibles para cualquiera — correrlo contra producción crea una cuenta admin real con contraseña conocida por todo internet. En producción, aplica solo las migraciones; el admin real se crea aparte con una contraseña generada (`openssl rand -base64 18`).
+
+Aiven free se pausa tras inactividad, igual que Supabase — hay que reanudarlo a mano si eso pasa.
+
+### Backend en Render
+
+1. Cuenta en [render.com](https://render.com) → conecta el repo de GitHub.
+2. **New → Web Service**: Root directory `backend`, Build command **`npm ci --include=dev && npm run build`**, Start command `npm run start`, Instance **Free**.
+3. En **Environment**, agrega todas las variables de arriba. No definas `PORT`.
+
+   **`--include=dev` es obligatorio.** Con `NODE_ENV=production` seteado, `npm ci` omite devDependencies por defecto — y `typescript` es una de ellas, necesaria para el build. Sin ese flag, Render usa un `tsc` de otra versión (de su imagen base) que puede fallar con errores que no se reproducen en local.
+
+### Frontend en Netlify
+
+1. [netlify.toml](netlify.toml) en la raíz ya proxea `/api/*` hacia el backend de Render — así el navegador ve todo como mismo origen y la cookie httpOnly de sesión sigue funcionando sin tocar código de autenticación. Si cambias de backend, actualiza la URL ahí.
+2. Cuenta en [app.netlify.com](https://app.netlify.com) → **Add new site → Import an existing project** → mismo repo. Netlify detecta `netlify.toml` solo.
+3. Deploy. Luego vuelve a Render y actualiza `CORS_ORIGIN` con la URL exacta que te dio Netlify.
+
+### Health check y checklist
+
+`GET /api/health` → `{ status: "ok", time: "<ISO>" }` — úsalo como healthcheck.
+
+- [ ] `npx tsc --noEmit` (backend) y `npm run build` (frontend) sin errores
+- [ ] `npm test` en `backend/` pasa
+- [ ] Secretos de producción generados de nuevo, nunca los de `.env.example`
+- [ ] `CORS_ORIGIN` apunta al origen real del frontend
+- [ ] `npx prisma migrate status` sin pendientes
+- [ ] Frontend y backend bajo el mismo origen (proxy de `netlify.toml`)
+- [ ] `STORAGE_*` probadas subiendo una foto real
+- [ ] `GET /api/health` responde `200`
+
+Puedes automatizar buena parte de esto con los subagentes en [.claude/agents/](.claude/agents/) (arriba).
 
 ## Licencia
 
