@@ -107,12 +107,17 @@ export function PushToggle() {
 
   return (
     <div>
+      {status === "on" && <p className="mb-1.5 text-xs text-safe">✅ Avisos de puntos críticos activados</p>}
       <button
         onClick={() => (status === "on" ? disable() : enable())}
         disabled={busy}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-border bg-surface px-3 py-2 text-xs font-semibold text-slate-200 hover:bg-surface2 disabled:opacity-50"
+        className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-2 text-xs font-semibold disabled:opacity-50 ${
+          status === "on"
+            ? "border-border bg-surface text-slate-400 hover:bg-surface2"
+            : "border-border bg-surface text-slate-200 hover:bg-surface2"
+        }`}
       >
-        {status === "on" ? "🔔 Avisos activados" : "🔔 Avisar de puntos críticos nuevos"}
+        {status === "on" ? "🔕 Desactivar avisos" : "🔔 Avisar de puntos críticos nuevos"}
       </button>
       {error && <p className="mt-1.5 text-xs text-danger">{error}</p>}
     </div>
