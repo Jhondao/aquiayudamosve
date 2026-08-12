@@ -59,11 +59,9 @@ npx prisma generate
 
 `migrate deploy` no crea migraciones nuevas ni pide confirmación interactiva; solo aplica las que ya están en `backend/prisma/migrations/`. El esquema define reportes, usuarios, reputación/confianza, categorías, organizaciones y moderación — revisa `backend/prisma/schema.prisma` si necesitas el detalle completo.
 
-Semilla de datos inicial (categorías, etc.), opcional según si ya tienes datos:
+**`npm run seed` (`backend/prisma/seed.ts`) NO es solo para categorías — no lo corras contra producción tal cual.** Además del catálogo de categorías (eso sí es dato real, hace falta), inserta **reportes falsos de demostración y usuarios de prueba con contraseñas fijas y públicas en el código fuente** (`admin@aquiayudamosve.org` / `Admin1234!`, entre otras). Si el repo es público — el nuestro lo es — esas contraseñas quedan visibles para cualquiera. Correrlo contra producción crea una cuenta admin real con contraseña conocida por todo internet.
 
-```bash
-npm run seed
-```
+Para producción, solo aplica las migraciones (arriba). Las categorías se pueden sembrar aparte con un script que solo toque esa tabla, o edítalas manualmente. El primer usuario admin real hay que crearlo con una contraseña generada aparte (`openssl rand -base64 18` o similar), nunca con `npm run seed` tal cual está.
 
 ---
 
@@ -194,7 +192,7 @@ El backend ya hace `app.set("trust proxy", 1)` ([backend/src/app.ts](backend/src
                  └─────────┬──────────┘
                             ▼
                  ┌───────────────────┐
-                 │  MySQL gestionado  │  (PandaStack / Northflank / etc.)
+                 │  MySQL gestionado  │  (Aiven free tier)
                  └───────────────────┘
 ```
 
@@ -221,9 +219,21 @@ El truco que evita tocar código de autenticación: [netlify.toml](netlify.toml)
    DATABASE_URL="<la url de producción>" npx prisma migrate deploy
    ```
 
-### B.3. Base de datos MySQL gratis
+### B.3. Base de datos MySQL gratis (Aiven)
 
-Necesitas un MySQL accesible por TCP desde fuera (PlanetScale cerró su plan gratis en abril 2026). Alternativas gratis actuales: **PandaStack** o **Northflank** (crea una base MySQL, copia la cadena de conexión como `DATABASE_URL`). Ninguna de estas tiene el historial de confiabilidad de PlanetScale — para algo donde gente real reporta necesidades urgentes, considera este el eslabón más frágil del stack gratis y ten un plan para migrar a un MySQL gestionado de pago si el proyecto gana tracción real.
+Necesitas un MySQL accesible por TCP desde fuera (PlanetScale cerró su plan gratis en abril 2026). Se probaron tres alternativas: **Northflank** pide tarjeta incluso para el plan gratis (verificación de pago, igual que Cloudflare); **PandaStack** no se llegó a probar por falta de documentación confiable. La que funcionó, sin tarjeta: **[Aiven](https://aiven.io)**.
+
+1. Cuenta gratis en [aiven.io](https://aiven.io) (login con GitHub o Google, sin tarjeta).
+2. **Create service** → tipo **MySQL** → plan **Free** (1 GB) → elige región → crear.
+3. Espera a que el estado pase a **Running** (puede tardar 1-2 minutos; el hostname no resuelve por DNS hasta que termina).
+4. En la pestaña **Connection information** del servicio, copia **Host**, **Port**, **User**, **Password** y el nombre de base (`defaultdb` por defecto).
+5. En esa misma pantalla, descarga el **CA Certificate** (ícono de descarga) y guárdalo como `backend/prisma/ca.pem` en el repo — Prisma resuelve rutas de certificado relativas a la carpeta `prisma/`, y este archivo **sí se commitea** (es un certificado público, no un secreto).
+6. Arma el `DATABASE_URL` así (nota el parámetro `sslcert`, obligatorio — Aiven usa una CA propia que Node no reconoce por defecto, y `?sslaccept=strict` sin el certificado da error `P1011: certificate was not trusted`):
+   ```
+   mysql://<user>:<password>@<host>:<port>/defaultdb?sslcert=ca.pem
+   ```
+
+Caveat a aceptar: el servicio gratis de Aiven se apaga tras un período de inactividad (avisan por correo antes) — igual que el caveat de Supabase Storage. Para algo donde gente real reporta necesidades urgentes, este es el eslabón más frágil del stack gratis; ten un plan para migrar a un MySQL gestionado de pago si el proyecto gana tracción real.
 
 ### B.4. Frontend en Netlify
 
