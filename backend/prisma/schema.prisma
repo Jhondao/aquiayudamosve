@@ -282,7 +282,10 @@ model SecurityEvent {
 // activarlas desde su dispositivo.
 model PushSubscription {
   id        String   @id @default(uuid())
-  endpoint  String   @unique
+  // Los endpoints reales (sobre todo los de Apple, web.push.apple.com)
+  // suelen pasar los 191 caracteres que Prisma usa por defecto para String
+  // — con eso, el insert fallaba con un 500 real, no un error de validación.
+  endpoint  String   @unique @db.VarChar(500)
   p256dh    String
   auth      String
   createdAt DateTime @default(now())
