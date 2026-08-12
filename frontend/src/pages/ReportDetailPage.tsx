@@ -1,5 +1,5 @@
 import { useEffect, useState } from "react";
-import { Link, useNavigate, useParams } from "react-router-dom";
+import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { GROUP_META } from "../components/categoryStyle";
@@ -78,9 +78,15 @@ export default function ReportDetailPage() {
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6">
-      <Link to="/" className="text-xs font-semibold text-accent">
-        ← Volver
-      </Link>
+      <button
+        onClick={() => navigate("/")}
+        className="inline-flex items-center gap-1.5 rounded-lg py-1.5 pl-1 pr-3 text-sm font-semibold text-slate-200 hover:bg-surface2"
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+        </svg>
+        Volver al mapa
+      </button>
 
       {report.status === "inactive" && (
         <div className="mt-3 rounded-xl bg-surface2 px-3 py-2 text-sm">Este reporte fue marcado como inactivo.</div>
@@ -138,7 +144,7 @@ export default function ReportDetailPage() {
         </button>
       </div>
 
-      <p className="mt-5 text-xs text-slate-400">Actualizaciones rápidas</p>
+      <h2 className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-400">Actualizaciones rápidas</h2>
       <div className="mt-2 flex flex-wrap gap-2">
         {QUICK_UPDATES.map((q) => (
           <button
@@ -155,8 +161,8 @@ export default function ReportDetailPage() {
 
       {report.evidence.length > 0 && (
         <>
-          <p className="mt-5 text-sm font-bold">Evidencia aportada</p>
-          <p className="text-[11px] text-slate-500">
+          <h2 className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-400">Evidencia aportada</h2>
+          <p className="mt-1 text-[11px] text-slate-500">
             Una fotografía o enlace no es por sí sola una prueba definitiva; se pondera junto al resto de señales.
           </p>
           <div className="mt-2 flex flex-col gap-2">
@@ -178,31 +184,33 @@ export default function ReportDetailPage() {
         </>
       )}
 
-      <p className="mt-5 text-sm font-bold">Agregar evidencia (opcional)</p>
-      <input
-        type="file"
-        accept="image/jpeg,image/png,image/webp"
-        onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
-        className="mt-2 block text-xs"
-      />
-      <input
-        value={sourceUrl}
-        onChange={(e) => setSourceUrl(e.target.value)}
-        placeholder="Enlace a una fuente (opcional)"
-        className="mt-2 h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
-      />
-      <button onClick={submitEvidence} className="mt-2 rounded-lg border border-border px-4 py-2 text-xs font-semibold">
-        Agregar evidencia
-      </button>
-      {notice && <p className="mt-2 text-xs text-safe">{notice}</p>}
+      <h2 className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-400">Agregar evidencia (opcional)</h2>
+      <div className="mt-2 rounded-2xl border border-border bg-surface p-4">
+        <input
+          type="file"
+          accept="image/jpeg,image/png,image/webp"
+          onChange={(e) => setPhoto(e.target.files?.[0] ?? null)}
+          className="block text-xs"
+        />
+        <input
+          value={sourceUrl}
+          onChange={(e) => setSourceUrl(e.target.value)}
+          placeholder="Enlace a una fuente (opcional)"
+          className="mt-3 h-10 w-full rounded-lg border border-border bg-surface2 px-3 text-sm"
+        />
+        <button onClick={submitEvidence} className="mt-3 rounded-lg border border-border px-4 py-2 text-xs font-semibold">
+          Agregar evidencia
+        </button>
+        {notice && <p className="mt-2 text-xs text-safe">{notice}</p>}
+      </div>
 
       {error && <p className="mt-4 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
 
-      <p className="mt-6 text-sm font-bold">Trazabilidad</p>
-      <div className="mt-2 flex flex-col">
+      <h2 className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-400">Trazabilidad</h2>
+      <div className="mt-2 rounded-2xl border border-border bg-surface px-4">
         {report.timeline.map((t, i) => (
-          <div key={i} className="flex gap-3 border-b border-border py-2 text-sm">
-            <span className="min-w-[70px] text-xs text-slate-500">{relativeTime(t.at)}</span>
+          <div key={i} className="flex gap-3 border-b border-border py-2.5 text-sm last:border-b-0">
+            <span className="min-w-[70px] shrink-0 text-xs text-slate-500">{relativeTime(t.at)}</span>
             <span>{t.text}</span>
           </div>
         ))}
