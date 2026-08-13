@@ -63,6 +63,16 @@ enum LocationSource {
   manual
 }
 
+// PROMPT MAESTRO v3, Fase A — ledger de promesas de ayuda, separado de
+// Report.quantityReceived a propósito (sección 5: nunca sumar
+// automáticamente algo comprometido como recibido).
+enum CommitmentStatus {
+  committed
+  on_the_way
+  delivered
+  cancelled
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
@@ -85,6 +95,7 @@ model User {
   evidence          ReportEvidence[]
   updates           ReportUpdate[]
   flagsRaised       ReportFlag[]       @relation("FlagRaisedBy")
+  needCommitments   NeedCommitment[]
   moderationActions ModerationAction[] @relation("ModerationActor")
   auditLogs         AuditLog[]         @relation("AuditActor")
   sessions          Session[]
@@ -192,6 +203,7 @@ model Report {
   evidence      ReportEvidence[]
   updates       ReportUpdate[]
   flags         ReportFlag[]
+  needCommitments NeedCommitment[]
 
   @@index([departmentName, municipalityName])
   @@index([categoryId])
@@ -258,6 +270,26 @@ model ReportFlag {
   user   User   @relation("FlagRaisedBy", fields: [userId], references: [id])
 
   @@index([reportId])
+}
+
+model NeedCommitment {
+  id               String           @id @default(uuid())
+  reportId         String
+  userId           String
+  quantity         Float
+  unit             String?
+  status           CommitmentStatus @default(committed)
+  estimatedArrival DateTime?
+  transportMethod  String?
+  note             String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([reportId])
+  @@index([userId])
 }
 
 model ModerationAction {

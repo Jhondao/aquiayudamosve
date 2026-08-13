@@ -1,4 +1,4 @@
-import type { Category, NeedStatus, Profile, Report } from "../types";
+import type { Category, CommitmentStatus, NeedStatus, Profile, Report } from "../types";
 
 // Kept in memory only — never localStorage/sessionStorage, so an XSS payload
 // reading storage can't lift a long-lived credential. Refresh token lives in
@@ -138,6 +138,22 @@ export const api = {
     request<Report>(`/api/reports/${id}/update`, { method: "POST", body: JSON.stringify({ text, deactivates }) }),
   updateNeedStatus: (id: string, data: { needStatus?: NeedStatus; quantityReceived?: number }) =>
     request<Report>(`/api/reports/${id}/need-status`, { method: "POST", body: JSON.stringify(data) }),
+  createCommitment: (
+    id: string,
+    data: {
+      quantity: number;
+      unit?: string;
+      status?: "committed" | "on_the_way";
+      estimatedArrival?: string;
+      transportMethod?: string;
+      note?: string;
+    }
+  ) => request<Report>(`/api/reports/${id}/commitments`, { method: "POST", body: JSON.stringify(data) }),
+  updateCommitment: (
+    id: string,
+    commitmentId: string,
+    data: { status?: CommitmentStatus; estimatedArrival?: string; note?: string }
+  ) => request<Report>(`/api/reports/${id}/commitments/${commitmentId}`, { method: "PATCH", body: JSON.stringify(data) }),
 
   myReports: () => request<{ profile: Profile; reports: Partial<Report>[] }>("/api/users/me/reports"),
 

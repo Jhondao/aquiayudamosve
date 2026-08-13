@@ -92,6 +92,28 @@ export const listQuerySchema = z.object({
   pageSize: z.coerce.number().int().min(1).max(100).optional().default(50),
 });
 
+// PROMPT MAESTRO v3, Fase A — compromiso parcial de ayuda. Sin .refine() en
+// updateCommitmentSchema por el mismo motivo que needStatusSchema.
+export const COMMITMENT_STATUS_VALUES = ["committed", "on_the_way", "delivered", "cancelled"] as const;
+export type CommitmentStatusValue = (typeof COMMITMENT_STATUS_VALUES)[number];
+
+export const createCommitmentSchema = z.object({
+  quantity: z.number().positive().max(1_000_000),
+  unit: z.string().trim().min(1).max(20).optional(),
+  // Solo se puede *crear* un compromiso prometido o en camino — no tiene
+  // sentido nacer ya entregado/cancelado.
+  status: z.enum(["committed", "on_the_way"]).optional(),
+  estimatedArrival: z.coerce.date().optional(),
+  transportMethod: z.string().trim().min(1).max(60).optional(),
+  note: z.string().trim().min(1).max(300).optional(),
+});
+
+export const updateCommitmentSchema = z.object({
+  status: z.enum(COMMITMENT_STATUS_VALUES).optional(),
+  estimatedArrival: z.coerce.date().optional(),
+  note: z.string().trim().min(1).max(300).optional(),
+});
+
 export const nearbyQuerySchema = z.object({
   lat: z.coerce.number().gte(-90).lte(90),
   lng: z.coerce.number().gte(-180).lte(180),

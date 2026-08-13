@@ -30,13 +30,15 @@ libre, nunca validados contra un catálogo (ver sección 4.2). Las 6 zonas del t
 Pereira, Manizales, Armenia, Quibdó, Popayán) solo aparecen como accesos rápidos en la UI, no como
 un límite de qué se puede reportar.
 
-**Evolución hacia coordinación (otro documento, "PROMPT MAESTRO" original):** el usuario también
-pegó un documento previo que pide evolucionar la app de "mapa de reportes" a un sistema de
-coordinación de necesidades y capacidades, ordenado en 6 fases explícitas por el documento mismo.
-**Fase 1 (estado ampliado de necesidades) ya está implementada** — ver sección 4.2. Fases 2–6
-(módulo de recursos/servicios, compromisos "puedo cubrir X", matching, notificaciones segmentadas,
-analítica) son roadmap, no código — el documento mismo pide evolución incremental, sin reemplazar
-lo que ya funciona.
+**Evolución hacia coordinación (otro documento, "PROMPT MAESTRO" original, y su continuación
+"PROMPT MAESTRO v3"):** el usuario también pegó documentos que piden evolucionar la app de "mapa de
+reportes" a un sistema de coordinación de necesidades y capacidades. **Ya implementado:** Fase 1
+(estado ampliado de necesidades, sección 4.2), cobertura territorial nacional (sección 4.2/6.8), y
+Fase A de v3 (`NeedCommitment` — compromisos parciales de ayuda con tracking de estado, sección
+4.2/6.9). **Roadmap, no código todavía:** un módulo completo de ofertas/recursos "quiero ayudar"
+(Fase B de v3), un motor de matching necesidad↔recurso (Fase D), y coordinación avanzada — alertas
+de cercanía, puntos saturados, reclamar un punto (Fase E) — el documento mismo pide evolución
+incremental, una fase a la vez, sin reemplazar lo que ya funciona.
 
 ## 2. Stack
 
@@ -241,6 +243,42 @@ En el frontend, un reporte `cubierto`/`excedente` se marca en verde en el mapa y
 (`needStatusStyle.ts`), y sale del ranking "Necesidades urgentes" del home sin desaparecer del
 listado — ver 6.4/6.7.
 
+**Compromisos de ayuda / `NeedCommitment` (Fase A del "PROMPT MAESTRO v3"):** modelo separado
+(`id, reportId, userId, quantity, unit?, status, estimatedArrival?, transportMethod?, note?`) que
+registra promesas individuales de ayuda ("puedo cubrir 50L de esto") sobre reportes de grupo
+`necesidad`. **Deliberadamente nunca suma a `quantityReceived`** — es un ledger de promesas, no de
+entregas confirmadas; solo `updateNeedStatus` (arriba) toca `quantityReceived`, y solo cuando
+alguien lo actualiza a mano. `status`: `committed` → `on_the_way` → `delivered` (o `cancelled` en
+cualquier punto antes de `delivered`).
+
+`POST /:id/commitments` (`requireAuth`, mismo nivel comunitario que confirm/flag/update/need-status
+— cualquiera puede prometer ayuda, no solo el creador del reporte) crea el compromiso; si
+`status: "on_the_way"`, `maybeBumpToEnCamino()` sube `Report.needStatus` de `necesitamos` →
+`en_camino`, pero **nunca pisa una señal más fuerte** (`parcialmente_cubierto`/`cubierto`/
+`excedente`) — mismo criterio de "nunca retroceder" que ya usa `updateNeedStatus`. Un compromiso que
+nace `committed` (solo prometido, no en camino) no toca `needStatus` en absoluto.
+
+`PATCH /:id/commitments/:commitmentId` es **el único endpoint de todo el módulo `reports` con
+ownership check**: 403 si `req.user.id` no es el `userId` que creó el compromiso (comparado con
+404 si el compromiso no existe o no pertenece a ese reporte). Todo lo demás en `reports.routes.ts`
+es intencionalmente abierto a cualquier usuario autenticado — esta es la única excepción, porque un
+compromiso es una promesa personal, no una acción comunitaria sobre el reporte de otro.
+
+Para que la UI muestre los botones de actualizar un compromiso solo a su dueño **sin exponer la
+identidad real de quien prometió ayuda** (la UI siempre dice "un colaborador", nunca un nombre),
+`serializeReport`/`getReport` ganaron un parámetro `viewerId?` opcional — cada `NeedCommitment`
+serializado expone `mine: boolean` (`viewerId === c.userId`) en vez del `userId` real.
+`reports.routes.ts` pasa `req.user?.id` como `viewerId` en `GET /:id` y en cada acción que devuelve
+el reporte actualizado (`confirmReport`/`flagReport`/`addReportUpdate`/`updateNeedStatus`/
+`addEvidence`/`createCommitment`/`updateCommitment` todos hacen `return getReport(reportId, userId)`).
+
+En el frontend, el bloque "Estado de la necesidad" (`ReportDetailPage.tsx`) gana una fila de 4
+números (Necesarios / **Comprometidos** = suma de `quantity` de compromisos `committed`+
+`on_the_way` — nunca resta de "Pendientes", que sigue siendo `quantityNeeded - quantityReceived` /
+Recibidos / Pendientes), un formulario "Puedo ayudar con esto", y la lista de compromisos con
+acciones "Marcar en camino"/"Marcar entregado"/"Cancelar" visibles únicamente cuando `mine: true` y
+el estado no es terminal (`delivered`/`cancelled`).
+
 ### 4.3 Sistema de confianza y reputación (`modules/trust/`)
 
 Dos conceptos separados, cuidadosamente distintos en el código:
@@ -309,7 +347,9 @@ MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, apl
 `territory_coverage` (reemplaza la columna `city` por `departmentName`/`municipalityName`/
 `localityName`/`locationSource`, `approxLocationText` pasa a nullable, con backfill de los 5
 valores de `city` que existían a su departamento real, y `DROP COLUMN city` en el mismo paso — ver
-"Cobertura territorial nacional" en 4.2 y la decisión correspondiente en la sección 10).
+"Cobertura territorial nacional" en 4.2 y la decisión correspondiente en la sección 10) →
+`need_commitments` (tabla nueva `NeedCommitment`, sin backfill — no reemplaza ni toca ninguna
+columna existente de `Report`, ver "Compromisos de ayuda" en 4.2).
 
 | Modelo | Para qué |
 |---|---|
@@ -323,6 +363,7 @@ valores de `city` que existían a su departamento real, y `DROP COLUMN city` en 
 | `ReportEvidence` | Foto y/o link de fuente |
 | `ReportUpdate` | Actualización de texto sobre un reporte existente |
 | `ReportFlag` | Denuncia con motivo, `resolved` boolean |
+| `NeedCommitment` | Promesa de ayuda de un usuario sobre un reporte de necesidad — ver 4.2 |
 | `ModerationAction` | Acción de moderador sobre un reporte |
 | `AuditLog` | Trail genérico de cualquier acción administrativa |
 | `Session` | Refresh tokens activos (hash, no el token) |
@@ -335,6 +376,8 @@ valores de `city` que existían a su departamento real, y `DROP COLUMN city` en 
 `LocationSource` (enum): `gps` / `catalog` / `manual` — cómo se obtuvo el pin de un `Report`.
 `NeedStatus` (enum, Fase 1): `necesitamos` / `en_camino` / `parcialmente_cubierto` / `cubierto` /
 `excedente` / `desactualizado` — solo se usa en `Report` cuando `category.group === "necesidad"`.
+`CommitmentStatus` (enum, Fase A de "PROMPT MAESTRO v3"): `committed` / `on_the_way` / `delivered` /
+`cancelled` — estado de un `NeedCommitment`, ver 4.2.
 
 ## 6. Frontend — arquitectura
 
@@ -516,6 +559,21 @@ coordenadas reales siempre.
 fallback a una vista de Colombia completa (`[4.5, -74.3]`, zoom 5) cuando no hay ninguno. El prop
 `city` desapareció del componente por completo.
 
+### 6.9 Compromisos de ayuda en el frontend (Fase A de "PROMPT MAESTRO v3")
+
+Dentro de la misma sección "Estado de la necesidad" de `ReportDetailPage.tsx` (6.7), cuando
+`report.quantityNeeded != null` aparece una fila de 4 números (Necesarios / Comprometidos /
+Recibidos / Pendientes) — "Comprometidos" es un valor derivado en el propio componente
+(`report.needCommitments.filter(committed|on_the_way).reduce(sum quantity)`), no viene del backend.
+Debajo, un formulario "Puedo ayudar con esto" (cantidad + unidad + checkbox "Voy en camino ahora"
+que decide el `status` inicial y revela ETA/transporte opcionales) llama `api.createCommitment()`
+— mismo `guardedAction` que el resto de acciones (redirige a `/login` sin sesión). La lista de
+compromisos (`COMMITMENT_STATUS_META` en el propio archivo, mismo patrón que `NEED_STATUS_META`)
+solo muestra botones "Marcar en camino"/"Marcar entregado"/"Cancelar" en las tarjetas donde
+`c.mine === true` y el estado no es terminal — el backend nunca manda el `userId` real de quien
+prometió ayuda, así que la UI no tiene forma de mostrar esos controles sobre el compromiso de otro
+aunque quisiera.
+
 ## 7. Flujos de punta a punta
 
 **Reportar sin cuenta:** usuario en `/reportar` o `/necesito-ayuda` sin sesión → llena el
@@ -641,14 +699,18 @@ migraciones; el admin real se crea aparte con password generada.
   1:1 aparte — mismo argumento que ya vale para `trustScore`: es un dato 1:1 real, todo listado ya
   carga el `Report` completo, y quedan `NULL` para las 3 categorías que no son `necesidad` (igual
   que `isSensitive`).
-- **`quantityReceived` es un total corriente, no un ledger de contribuciones.** Modelar "quién trajo
-  cuánto" por persona es justo lo que Fase 3 (`NeedCommitment`, ver README/plan de Fase 1) agrega
-  después — adelantarlo en Fase 1 hubiera significado una tabla nueva para un caso de uso que
-  todavía no existe en el producto.
-- **Confirmar/denunciar/actualizar/estado de necesidad son todos comunitarios**, nunca restringidos
+- **`quantityReceived` sigue siendo un total corriente, no un ledger de contribuciones — a propósito,
+  incluso después de agregar `NeedCommitment`.** Modelar "quién trajo cuánto" por persona es
+  exactamente lo que `NeedCommitment` (Fase A de "PROMPT MAESTRO v3", ver 4.2/6.9) agrega, pero
+  vive **separado**: un compromiso nunca suma automáticamente a `quantityReceived`, porque prometer
+  ayuda no es lo mismo que haberla entregado — mezclar ambos dejaría el número "Recibidos" mintiendo
+  apenas alguien promete algo que todavía no llegó.
+- **Actualizar un `NeedCommitment` es la única excepción de ownership en todo `reports.routes.ts`.**
+  Confirmar/denunciar/actualizar/estado de necesidad siguen siendo comunitarios, nunca restringidos
   al creador del reporte — "reclamar un punto" (que un responsable se identifique y tenga permisos
-  exclusivos sobre él) es una idea del documento maestro explícitamente posterior a Fase 1, no
-  implementada.
+  exclusivos *sobre el reporte*) sigue siendo una idea del documento maestro no implementada. Pero un
+  compromiso de ayuda es una promesa *personal*, no una acción sobre el reporte de otro — por eso
+  `PATCH /:id/commitments/:commitmentId` sí exige `userId === commitment.userId` (403 si no).
 - **El catálogo territorial vive solo en el frontend, nunca en el backend.** `departmentName`/
   `municipalityName` son texto libre validado por largo, no por pertenencia a ningún catálogo — es
   la única forma de cumplir "nunca bloquear una publicación porque el lugar no esté en una lista

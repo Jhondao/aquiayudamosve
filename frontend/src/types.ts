@@ -18,6 +18,20 @@ export type NeedStatus =
 
 export type LocationSource = "gps" | "catalog" | "manual";
 
+export type CommitmentStatus = "committed" | "on_the_way" | "delivered" | "cancelled";
+
+export interface Commitment {
+  id: string;
+  quantity: number;
+  unit: string | null;
+  status: CommitmentStatus;
+  estimatedArrival: string | null;
+  transportMethod: string | null;
+  note: string | null;
+  createdAt: string;
+  mine: boolean;
+}
+
 export interface Category {
   id: string;
   group: CategoryGroup;
@@ -71,6 +85,7 @@ export interface Report {
   createdById: string;
   evidence: Evidence[];
   timeline: TimelineEntry[];
+  needCommitments: Commitment[];
 }
 
 export interface Profile {

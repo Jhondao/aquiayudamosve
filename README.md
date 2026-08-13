@@ -31,6 +31,8 @@ La home no es una lista genérica de reportes: está organizada como un panel de
 - Confirmación comunitaria de reportes (confirmar / dudoso / incorrecto) y sistema de reputación (nuevo → colaborador → colaborador confiable → voluntario verificado → organización → entidad institucional)
 - Decaimiento de confianza (`STALE_HOURS_THRESHOLD`): un reporte sin confirmar por varias horas pierde puntaje automáticamente, para que la info vieja no aparente ser tan confiable como la reciente
 - Actualizaciones sobre un reporte ya publicado (ej. "evacuación ordenada", "ya no se necesita más de esto") sin tener que crear uno nuevo
+- Estado ampliado de necesidades: reportes de necesidad llevan cantidad necesaria/recibida y un estado (`necesitamos` → `en_camino` → `parcialmente_cubierto` → `cubierto`/`excedente`/`desactualizado`) que cualquiera de la comunidad puede actualizar, con un botón directo "Ya está cubierto — no traer más" para dejar de saturar un punto ya resuelto
+- Compromisos de ayuda (`NeedCommitment`): cualquiera puede prometer "puedo cubrir X de esto" sobre una necesidad, con seguimiento propio (prometido → en camino → entregado/cancelado) separado de la cantidad recibida real, para no confundir una promesa con una entrega confirmada ([backend/src/modules/reports/reports.service.ts](backend/src/modules/reports/reports.service.ts))
 - Evidencia en reportes: foto (procesada con `sharp` — se le quita el EXIF/GPS antes de subirla) y/o enlace de fuente externa
 - Moderación: reportes marcados, panel de administración con vista de **todos** los reportes (no solo denunciados), acciones de ocultar / marcar falso / marcar no vigente / eliminar, registro de auditoría
 

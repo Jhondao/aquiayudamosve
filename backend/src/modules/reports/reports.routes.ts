@@ -7,20 +7,24 @@ import {
   addEvidence,
   addReportUpdate,
   confirmReport,
+  createCommitment,
   createReport,
   findNearbyReports,
   flagReport,
   getReport,
   listReports,
+  updateCommitment,
   updateNeedStatus,
 } from "./reports.service";
 import {
   confirmSchema,
+  createCommitmentSchema,
   createReportSchema,
   flagSchema,
   listQuerySchema,
   nearbyQuerySchema,
   needStatusSchema,
+  updateCommitmentSchema,
   updateSchema,
 } from "./reports.schemas";
 import { persistEvidenceImage, uploadEvidenceImage } from "./uploads";
@@ -46,7 +50,7 @@ router.get("/nearby", validateQuery(nearbyQuerySchema), async (req, res, next) =
 
 router.get("/:id", async (req, res, next) => {
   try {
-    res.json(await getReport(req.params.id));
+    res.json(await getReport(req.params.id, req.user?.id));
   } catch (err) {
     next(err);
   }
@@ -91,6 +95,24 @@ router.post("/:id/update", requireAuth, confirmationLimiter, validateBody(update
 router.post("/:id/need-status", requireAuth, confirmationLimiter, validateBody(needStatusSchema), async (req, res, next) => {
   try {
     res.json(await updateNeedStatus(req.params.id, req.user!.id, req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PROMPT MAESTRO v3, Fase A — mismo nivel comunitario que confirm/flag/update/need-status.
+router.post("/:id/commitments", requireAuth, confirmationLimiter, validateBody(createCommitmentSchema), async (req, res, next) => {
+  try {
+    res.status(201).json(await createCommitment(req.params.id, req.user!.id, req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Único endpoint de este módulo con ownership check — el service devuelve 403 si no es tu compromiso.
+router.patch("/:id/commitments/:commitmentId", requireAuth, confirmationLimiter, validateBody(updateCommitmentSchema), async (req, res, next) => {
+  try {
+    res.json(await updateCommitment(req.params.id, req.params.commitmentId, req.user!.id, req.body));
   } catch (err) {
     next(err);
   }

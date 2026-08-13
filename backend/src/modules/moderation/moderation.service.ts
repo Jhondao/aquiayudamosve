@@ -10,6 +10,7 @@ const reportInclude = {
   evidence: true,
   flags: { where: { resolved: false } },
   updates: { orderBy: { createdAt: "asc" as const } },
+  needCommitments: { orderBy: { createdAt: "desc" as const } },
 };
 
 export async function listFlaggedReports() {
@@ -21,7 +22,7 @@ export async function listFlaggedReports() {
     include: reportInclude,
     orderBy: { updatedAt: "desc" },
   });
-  return reports.map(serializeReport);
+  return reports.map((r) => serializeReport(r));
 }
 
 // Unlike the public /api/reports listing, this is not limited to
@@ -38,7 +39,7 @@ export async function listAllReports(filters: { departmentName?: string; municip
     include: reportInclude,
     orderBy: { createdAt: "desc" },
   });
-  return reports.map(serializeReport);
+  return reports.map((r) => serializeReport(r));
 }
 
 async function recordAction(adminId: string, action: string, reportId: string, reason: string) {

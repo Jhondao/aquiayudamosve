@@ -4,7 +4,7 @@ import { HttpError } from "../../middleware/errorHandler";
 import { coarsenCoordinates, haversineMeters } from "../../utils/geo";
 import { applyDecay, determineTrustLevel, recomputeReportTrustScore, trustLevelCopy } from "../trust/trustScore.service";
 import { rewardUsefulConfirmation } from "../trust/reputation.service";
-import { SENSITIVE_CATEGORY_KEYS, needStatusLabels, type NeedStatusValue } from "./reports.schemas";
+import { SENSITIVE_CATEGORY_KEYS, needStatusLabels, type NeedStatusValue, type CommitmentStatusValue } from "./reports.schemas";
 import { broadcastPush } from "../../lib/push";
 
 const reportWithRelations = Prisma.validator<Prisma.ReportDefaultArgs>()({
@@ -15,11 +15,15 @@ const reportWithRelations = Prisma.validator<Prisma.ReportDefaultArgs>()({
     evidence: true,
     flags: { where: { resolved: false } },
     updates: { orderBy: { createdAt: "asc" } },
+    needCommitments: { orderBy: { createdAt: "desc" } },
   },
 });
 type ReportWithRelations = Prisma.ReportGetPayload<typeof reportWithRelations>;
 
-export function serializeReport(report: ReportWithRelations) {
+// viewerId es opcional (reportes se leen sin sesión) y solo se usa para
+// calcular `mine` por compromiso — nunca se expone el userId real de quien
+// lo creó (ver needCommitments abajo).
+export function serializeReport(report: ReportWithRelations, viewerId?: string) {
   const isOrgBacked = Boolean(report.organizationId);
   const displayScore = applyDecay(report.trustScore, report.lastConfirmedAt);
   const incorrectCount =
@@ -83,6 +87,20 @@ export function serializeReport(report: ReportWithRelations) {
       { at: report.createdAt, text: "Publicado" },
       ...report.updates.map((u) => ({ at: u.createdAt, text: u.text })),
     ],
+    // PROMPT MAESTRO v3, Fase A — ledger de promesas de ayuda. Nunca el
+    // userId real (la UI dice "un colaborador"); `mine` es lo mínimo para
+    // que el dueño de un compromiso vea sus propios controles.
+    needCommitments: report.needCommitments.map((c) => ({
+      id: c.id,
+      quantity: c.quantity,
+      unit: c.unit,
+      status: c.status,
+      estimatedArrival: c.estimatedArrival,
+      transportMethod: c.transportMethod,
+      note: c.note,
+      createdAt: c.createdAt,
+      mine: viewerId != null && c.userId === viewerId,
+    })),
   };
 }
 
@@ -225,11 +243,11 @@ export async function listReports(filters: {
     prisma.report.count({ where }),
   ]);
 
-  return { reports: reports.map(serializeReport), total, page: filters.page, pageSize: filters.pageSize };
+  return { reports: reports.map((r) => serializeReport(r)), total, page: filters.page, pageSize: filters.pageSize };
 }
 
-export async function getReport(id: string) {
-  return serializeReport(await loadReport(id));
+export async function getReport(id: string, viewerId?: string) {
+  return serializeReport(await loadReport(id), viewerId);
 }
 
 export async function findNearbyReports(params: { lat: number; lng: number; radiusMeters: number; categoryKey?: string }) {
@@ -255,7 +273,7 @@ export async function findNearbyReports(params: { lat: number; lng: number; radi
 
   return candidates
     .filter((r) => haversineMeters(params.lat, params.lng, r.lat, r.lng) <= params.radiusMeters)
-    .map(serializeReport);
+    .map((r) => serializeReport(r));
 }
 
 export async function confirmReport(reportId: string, userId: string, type: "confirm" | "unsure" | "incorrect") {
@@ -276,14 +294,14 @@ export async function confirmReport(reportId: string, userId: string, type: "con
   }
 
   await recomputeReportTrustScore(reportId);
-  return getReport(reportId);
+  return getReport(reportId, userId);
 }
 
 export async function flagReport(reportId: string, userId: string, reason: string) {
   await loadReport(reportId);
   await prisma.reportFlag.create({ data: { reportId, userId, reason } });
   await recomputeReportTrustScore(reportId);
-  return getReport(reportId);
+  return getReport(reportId, userId);
 }
 
 export async function addReportUpdate(reportId: string, userId: string, text: string, deactivates?: boolean) {
@@ -292,7 +310,7 @@ export async function addReportUpdate(reportId: string, userId: string, text: st
   if (deactivates) {
     await prisma.report.update({ where: { id: reportId }, data: { status: "inactive" } });
   }
-  return getReport(reportId);
+  return getReport(reportId, userId);
 }
 
 /**
@@ -334,12 +352,100 @@ export async function updateNeedStatus(
   });
   await prisma.reportUpdate.create({ data: { reportId, userId, text: parts.join(" "), deactivates: false } });
 
-  return getReport(reportId);
+  return getReport(reportId, userId);
 }
 
 export async function addEvidence(reportId: string, userId: string, input: { imageUrl?: string; sourceUrl?: string; relatedOrgName?: string }) {
   await loadReport(reportId);
   await prisma.reportEvidence.create({ data: { reportId, userId, ...input } });
   await recomputeReportTrustScore(reportId);
-  return getReport(reportId);
+  return getReport(reportId, userId);
+}
+
+/**
+ * Un compromiso "en camino" sube el reporte de necesitamos → en_camino,
+ * pero nunca pisa una señal más fuerte (parcialmente_cubierto/cubierto/
+ * excedente) — mismo criterio de "nunca retroceder el estado" que ya usa
+ * updateNeedStatus. Un compromiso "committed" (solo prometido, no en camino
+ * todavía) no toca needStatus en absoluto.
+ */
+async function maybeBumpToEnCamino(reportId: string) {
+  const report = await prisma.report.findUniqueOrThrow({ where: { id: reportId } });
+  if (report.needStatus === "necesitamos") {
+    await prisma.report.update({
+      where: { id: reportId },
+      data: { needStatus: "en_camino", lastConfirmedAt: new Date() },
+    });
+  }
+}
+
+/**
+ * PROMPT MAESTRO v3, Fase A. Mismo modelo comunitario que confirm/flag/
+ * update/need-status (requireAuth, no restringido al creador). Nunca toca
+ * quantityReceived — eso sigue siendo exclusivo de updateNeedStatus; un
+ * compromiso es una promesa, no una entrega confirmada (sección 5 del
+ * documento: "nunca sumar automáticamente algo comprometido como recibido").
+ */
+export async function createCommitment(
+  reportId: string,
+  userId: string,
+  input: {
+    quantity: number;
+    unit?: string;
+    status?: "committed" | "on_the_way";
+    estimatedArrival?: Date;
+    transportMethod?: string;
+    note?: string;
+  }
+) {
+  const report = await loadReport(reportId);
+  if (report.category.group !== "necesidad") {
+    throw new HttpError(400, "Este reporte no es una necesidad.");
+  }
+  await prisma.needCommitment.create({
+    data: {
+      reportId,
+      userId,
+      quantity: input.quantity,
+      unit: input.unit,
+      status: input.status ?? "committed",
+      estimatedArrival: input.estimatedArrival,
+      transportMethod: input.transportMethod,
+      note: input.note,
+    },
+  });
+  if (input.status === "on_the_way") await maybeBumpToEnCamino(reportId);
+  return getReport(reportId, userId);
+}
+
+/**
+ * Único endpoint del módulo con ownership check — un compromiso es una
+ * promesa personal, no una acción comunitaria abierta como el resto.
+ */
+export async function updateCommitment(
+  reportId: string,
+  commitmentId: string,
+  userId: string,
+  input: { status?: CommitmentStatusValue; estimatedArrival?: Date; note?: string }
+) {
+  if (input.status === undefined && input.estimatedArrival === undefined && input.note === undefined) {
+    throw new HttpError(400, "Indica qué quieres actualizar.");
+  }
+  const commitment = await prisma.needCommitment.findUnique({ where: { id: commitmentId } });
+  if (!commitment || commitment.reportId !== reportId) {
+    throw new HttpError(404, "Compromiso no encontrado.");
+  }
+  if (commitment.userId !== userId) {
+    throw new HttpError(403, "Solo quien creó este compromiso puede actualizarlo.");
+  }
+  await prisma.needCommitment.update({
+    where: { id: commitmentId },
+    data: {
+      ...(input.status ? { status: input.status } : {}),
+      ...(input.estimatedArrival !== undefined ? { estimatedArrival: input.estimatedArrival } : {}),
+      ...(input.note !== undefined ? { note: input.note } : {}),
+    },
+  });
+  if (input.status === "on_the_way") await maybeBumpToEnCamino(reportId);
+  return getReport(reportId, userId);
 }

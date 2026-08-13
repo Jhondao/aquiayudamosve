@@ -6,7 +6,14 @@ import { GROUP_META } from "../components/categoryStyle";
 import { NEED_STATUS_META } from "../components/needStatusStyle";
 import { TrustBadge } from "../components/TrustBadge";
 import { relativeTime } from "../utils/time";
-import type { NeedStatus, Report } from "../types";
+import type { CommitmentStatus, NeedStatus, Report } from "../types";
+
+const COMMITMENT_STATUS_META: Record<CommitmentStatus, { label: string; emoji: string; badgeClass: string }> = {
+  committed: { label: "Prometido", emoji: "🤝", badgeClass: "bg-accent/20 text-accent" },
+  on_the_way: { label: "En camino", emoji: "🚚", badgeClass: "bg-warn/20 text-warn" },
+  delivered: { label: "Entregado", emoji: "✅", badgeClass: "bg-safe/20 text-safe" },
+  cancelled: { label: "Cancelado", emoji: "✖️", badgeClass: "bg-slate-500/20 text-slate-400" },
+};
 
 const QUICK_UPDATES: { label: string; deactivates?: boolean }[] = [
   { label: "Sigue activo" },
@@ -37,6 +44,11 @@ export default function ReportDetailPage() {
   const [photo, setPhoto] = useState<File | null>(null);
   const [needStatusInput, setNeedStatusInput] = useState<NeedStatus>("necesitamos");
   const [quantityReceivedInput, setQuantityReceivedInput] = useState(0);
+  const [commitQuantity, setCommitQuantity] = useState("");
+  const [commitUnit, setCommitUnit] = useState("");
+  const [commitOnTheWay, setCommitOnTheWay] = useState(false);
+  const [commitEta, setCommitEta] = useState("");
+  const [commitTransport, setCommitTransport] = useState("");
 
   async function load() {
     if (!id) return;
@@ -87,12 +99,39 @@ export default function ReportDetailPage() {
     });
   }
 
+  async function submitCommitment() {
+    const quantity = Number(commitQuantity);
+    if (!quantity || quantity <= 0) {
+      setError("Indica cuánto puedes aportar.");
+      return;
+    }
+    await guardedAction(async () => {
+      setReport(
+        await api.createCommitment(report!.id, {
+          quantity,
+          unit: commitUnit.trim() || undefined,
+          status: commitOnTheWay ? "on_the_way" : "committed",
+          estimatedArrival: commitOnTheWay && commitEta ? new Date(commitEta).toISOString() : undefined,
+          transportMethod: commitOnTheWay ? commitTransport.trim() || undefined : undefined,
+        })
+      );
+      setCommitQuantity("");
+      setCommitUnit("");
+      setCommitOnTheWay(false);
+      setCommitEta("");
+      setCommitTransport("");
+    });
+  }
+
   if (error && !report) {
     return <p className="mx-auto max-w-lg px-4 py-10 text-center text-sm text-danger">{error}</p>;
   }
   if (!report) return <p className="mx-auto max-w-lg px-4 py-10 text-center text-sm text-slate-400">Cargando…</p>;
 
   const group = GROUP_META[report.category.group];
+  const committedTotal = report.needCommitments
+    .filter((c) => c.status === "committed" || c.status === "on_the_way")
+    .reduce((sum, c) => sum + c.quantity, 0);
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6">
@@ -221,6 +260,127 @@ export default function ReportDetailPage() {
               Actualizar estado
             </button>
           </div>
+
+          {report.quantityNeeded != null && (
+            <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+              <div>
+                <p className="text-sm font-bold">{report.quantityNeeded}</p>
+                <p className="text-[10px] uppercase text-slate-400">Necesarios</p>
+              </div>
+              <div>
+                <p className="text-sm font-bold">{committedTotal}</p>
+                <p className="text-[10px] uppercase text-slate-400">Comprometidos</p>
+              </div>
+              <div>
+                <p className="text-sm font-bold">{report.quantityReceived}</p>
+                <p className="text-[10px] uppercase text-slate-400">Recibidos</p>
+              </div>
+              <div>
+                <p className="text-sm font-bold">{report.quantityPending ?? "—"}</p>
+                <p className="text-[10px] uppercase text-slate-400">Pendientes</p>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 rounded-xl border border-border bg-surface2 p-3">
+            <h3 className="text-xs font-bold">Puedo ayudar con esto</h3>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={commitQuantity}
+                onChange={(e) => setCommitQuantity(e.target.value)}
+                placeholder="Cantidad"
+                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm sm:w-28"
+              />
+              <input
+                value={commitUnit}
+                onChange={(e) => setCommitUnit(e.target.value)}
+                placeholder="Unidad (kg, cajas...)"
+                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+              />
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={commitOnTheWay} onChange={(e) => setCommitOnTheWay(e.target.checked)} />
+              Voy en camino ahora
+            </label>
+            {commitOnTheWay && (
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="datetime-local"
+                  value={commitEta}
+                  onChange={(e) => setCommitEta(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                />
+                <input
+                  value={commitTransport}
+                  onChange={(e) => setCommitTransport(e.target.value)}
+                  placeholder="Cómo te movilizas (opcional)"
+                  className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                />
+              </div>
+            )}
+            <button onClick={submitCommitment} className="mt-2 h-10 w-full rounded-lg bg-accent text-sm font-bold text-white">
+              Comprometer ayuda
+            </button>
+          </div>
+
+          {report.needCommitments.length > 0 && (
+            <div className="mt-3 flex flex-col gap-2">
+              {report.needCommitments.map((c) => (
+                <div key={c.id} className="rounded-xl border border-border bg-surface2 p-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold ${COMMITMENT_STATUS_META[c.status].badgeClass}`}>
+                      {COMMITMENT_STATUS_META[c.status].emoji} {COMMITMENT_STATUS_META[c.status].label}
+                    </span>
+                    <span className="text-slate-400">{relativeTime(c.createdAt)}</span>
+                  </div>
+                  <p className="mt-1.5">
+                    {c.quantity} {c.unit ?? ""}
+                    {c.transportMethod && ` · ${c.transportMethod}`}
+                  </p>
+                  {c.note && <p className="mt-1 text-slate-400">{c.note}</p>}
+                  {c.mine && c.status !== "delivered" && c.status !== "cancelled" && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {c.status !== "on_the_way" && (
+                        <button
+                          onClick={() =>
+                            guardedAction(async () =>
+                              setReport(await api.updateCommitment(report.id, c.id, { status: "on_the_way" }))
+                            )
+                          }
+                          className="rounded-lg border border-border px-2.5 py-1 font-semibold"
+                        >
+                          Marcar en camino
+                        </button>
+                      )}
+                      <button
+                        onClick={() =>
+                          guardedAction(async () =>
+                            setReport(await api.updateCommitment(report.id, c.id, { status: "delivered" }))
+                          )
+                        }
+                        className="rounded-lg border border-border px-2.5 py-1 font-semibold"
+                      >
+                        Marcar entregado
+                      </button>
+                      <button
+                        onClick={() =>
+                          guardedAction(async () =>
+                            setReport(await api.updateCommitment(report.id, c.id, { status: "cancelled" }))
+                          )
+                        }
+                        className="rounded-lg border border-border px-2.5 py-1 font-semibold text-danger"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
         </div>
       )}
 
