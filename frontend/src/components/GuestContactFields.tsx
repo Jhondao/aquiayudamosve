@@ -1,3 +1,5 @@
+import { Link } from "react-router-dom";
+
 interface GuestContactFieldsProps {
   email: string;
   setEmail: (value: string) => void;
@@ -84,6 +86,14 @@ export function GuestContactFields({
           />
         </div>
       )}
+      <p className="mt-3 text-[11px] text-slate-500">
+        Estos datos solo se usan para identificarte dentro de la plataforma, nunca se venden ni se comparten con
+        fines comerciales. Más detalle en nuestra{" "}
+        <Link to="/privacidad" className="underline hover:text-slate-300">
+          política de tratamiento de datos personales
+        </Link>
+        .
+      </p>
     </div>
   );
 }

@@ -562,10 +562,11 @@ Un único `request<T>()` centraliza todo el fetch. Detalles importantes:
 | `/` | `HomePage` | público — hub de situación, ver 6.4 |
 | `/necesito-ayuda` | `NeedHelpPage` | público (con o sin cuenta) |
 | `/reportar` | `ReportFormPage` | público (con o sin cuenta) |
-| `/reporte/:id` | `ReportDetailPage` | lectura pública; confirmar/actualizar/evidencia requiere login (redirige a `/login`) |
+| `/reporte/:id` | `ReportDetailPage` | lectura pública; confirmar es público (ver 6.11); denunciar/actualizar/evidencia/estado de necesidad requieren login (redirige a `/login`) |
 | `/login`, `/registro` | `LoginPage`, `RegisterPage` | público |
 | `/perfil` | `ProfilePage` | requiere sesión |
 | `/admin` | `AdminPage` | requiere rol `moderator`/`admin` |
+| `/privacidad` | `PrivacyPolicyPage` | público — Habeas Data, ver 6.12 |
 
 ### 6.3 Publicar sin cuenta (frontend)
 
@@ -792,6 +793,27 @@ ausente nunca bloquea por sí solo). En local, el badge de reCAPTCHA muestra "Lo
 supported by this site key" — normal y esperado, la site key está registrada para los dominios de
 producción, no para desarrollo; el flujo sigue funcionando igual porque el backend no exige el
 token, solo lo verifica si llegó.
+
+### 6.12 Habeas Data / política de tratamiento de datos personales
+
+`PrivacyPolicyPage.tsx` (ruta `/privacidad`, enlazada desde `Footer.tsx` en toda la app) — página
+en español orientada a la Ley 1581 de 2012 y el Decreto 1377 de 2013 de Colombia (Habeas Data): qué
+datos se recolectan (nombre/correo/celular, ubicación, fotos de evidencia) y para qué, con quién se
+comparten (nunca con fines comerciales — solo los proveedores técnicos que hacen funcionar la
+plataforma), los 5 derechos del titular que exige la ley (conocer/actualizar/rectificar; solicitar
+prueba de autorización; ser informado; revocar autorización y/o solicitar supresión; acceder
+gratis), y cómo ejercerlos (`contacto@aquiayudamosve.org` — mismo correo que ya se usaba como
+`VAPID_CONTACT` por defecto, reusado a propósito en vez de inventar uno nuevo). Escrita en lenguaje
+llano, sin inventar una razón social/NIT que no existe — se describe honestamente como iniciativa
+comunitaria sin fines de lucro (mismo texto que ya usa `Footer.tsx`), no una empresa.
+
+**Aviso, no checkbox bloqueante.** `GuestContactFields.tsx` (cubre `ReportFormPage.tsx`,
+`NeedHelpPage.tsx` y `GuestConfirmModal.tsx` de una sola vez, ver 6.11) y `RegisterPage.tsx` tienen
+un texto corto con link a `/privacidad` junto al campo de datos/botón de enviar — a propósito no es
+una casilla de aceptación obligatoria que bloquee el formulario: esta app lleva toda la sesión
+quitando barreras de fricción para publicar/confirmar en una emergencia, y agregar un checkbox
+bloqueante justo ahí reintroduciría el mismo tipo de fricción. Informa la finalidad del tratamiento
+igual (que es la obligación central de Habeas Data) sin bloquear el flujo.
 
 ## 7. Flujos de punta a punta
 

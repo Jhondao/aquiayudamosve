@@ -38,6 +38,7 @@ La home no es una lista genérica de reportes: está organizada como un panel de
 - Compartir por WhatsApp: para reportes ya confirmados por la comunidad (o cubiertos/con excedente/institucionales) genera una pieza visual descargable con QR + texto pre-armado; para lo demás comparte solo el enlace con una advertencia — nunca una imagen que dé a entender que algo sin confirmar es un hecho. Los bots de WhatsApp/Telegram/Facebook ven una vista previa (imagen + título) real gracias a una puerta social server-rendered en `/r/:id` ([backend/src/modules/share/](backend/src/modules/share/))
 - Evidencia en reportes: foto (procesada con `sharp` — se le quita el EXIF/GPS antes de subirla) y/o enlace de fuente externa
 - Moderación: reportes marcados, panel de administración con vista de **todos** los reportes (no solo denunciados), acciones de ocultar / marcar falso / marcar no vigente / eliminar, registro de auditoría
+- Política de tratamiento de datos personales (Habeas Data, Ley 1581 de 2012 de Colombia) en `/privacidad`, enlazada desde el pie de página y desde cada formulario que pide nombre/correo/celular ([frontend/src/pages/PrivacyPolicyPage.tsx](frontend/src/pages/PrivacyPolicyPage.tsx))
 
 ## Estructura de datos y contenido
 
