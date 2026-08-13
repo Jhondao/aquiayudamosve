@@ -45,6 +45,15 @@ incremental, una fase a la vez, sin reemplazar lo que ya funciona.
 WHATSAPP"):** ya implementado — ver sección 4.6/6.10. Genera una pieza visual descargable/compartible
 solo para reportes que la comunidad ya confirmó, no para cualquier reporte (nunca "100% verificado").
 
+**Módulo comunitario de mascotas (documento "PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS"):**
+Fase 1/MVP ya implementada — ver sección 4.7/6.13. Reportar mascotas perdidas/encontradas/heridas o
+que necesitan ayuda, integrado a esta misma app (no una app aparte), reusando la identidad guest,
+`LocationSelector` y el motor de tarjetas de compartir ya existentes. **Sin mecanismo de contacto
+directo todavía** — la reunificación depende de que la pieza compartida por WhatsApp circule y
+llegue a la persona correcta, igual que hoy pasa de forma orgánica en los grupos; un mecanismo de
+contacto y las confirmaciones comunitarias quedan para Fase 2, tal como el propio documento lo pide
+(no implementar fases futuras antes de terminar el MVP).
+
 ## 2. Stack
 
 | Capa | Tecnología |
@@ -78,6 +87,9 @@ backend/src/
     prisma.ts             — instancia única de PrismaClient
     objectStorage.ts       — cliente S3 (Supabase Storage) para subir fotos de evidencia y piezas de compartir
     push.ts               — envío de Web Push (broadcastPush) usando web-push + VAPID
+    cardRenderer.ts        — primitivas genéricas de render satori→sharp (box, qrDataUri, renderCardPng), extraídas de share/ para reusar en pets/, ver 4.7
+    guestIdentity.ts        — resolveGuestContact/syntheticEmailForPhone, extraídas de reports/ para reusar en pets/, ver 4.7
+    recaptcha.ts            — verifyRecaptcha + requireRecaptchaForGuests (reCAPTCHA Enterprise), ver 4.2
   middleware/
     auth.ts                — authenticate (lee JWT, no bloquea) + requireAuth + requireRole
     errorHandler.ts         — HttpError, notFoundHandler, errorHandler (nunca expone stack traces)
@@ -92,6 +104,7 @@ backend/src/
     users/            — GET /api/users/me/reports (reportes propios del usuario logueado)
     push/             — VAPID public key, subscribe/unsubscribe — ver sección 4.5
     share/            — pieza visual + puerta social /r/:id para compartir por WhatsApp — ver sección 4.6
+    pets/             — mascotas perdidas/encontradas/heridas, moderación y compartir propios — ver sección 4.7
     trust/           — trustScore.service.ts (algoritmo de confianza) + reputation.service.ts (reputación de usuario) — sin rutas propias, solo lógica que usan reports/moderation
     security/          — securityEvents.ts: audit trail best-effort de eventos de auth (login, logout, fallos)
   utils/
@@ -464,6 +477,99 @@ mostrado en un chat y no ofrece forma pública de invalidarlo — por eso todo t
 incluye "Consulta el estado actualizado", el link en sí siempre lleva al estado real aunque el
 preview visual quede desactualizado en un chat viejo.
 
+### 4.7 Mascotas (`modules/pets/`)
+
+Fase 1/MVP del documento "PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS": reportar mascotas
+perdidas, encontradas, heridas o que necesitan ayuda, con foto, ubicación, estado y compartir por
+WhatsApp. **Deliberadamente no comparte código con `reports/`** más allá de dos extracciones a
+`lib/` (`cardRenderer.ts`, `guestIdentity.ts`) — mismo criterio de "sin servicios genéricos
+compartidos entre módulos" que ya rige el resto del backend (sección 3). **Sin `trustScore`/
+confirmaciones** — mascotas no tiene eje de confianza en Fase 1 en absoluto (eso es lo que las
+confirmaciones comunitarias de Fase 2 agregarían).
+
+**Modelo `PetReport`**: `reportType` (`lost`/`found`/`injured`/`needs_help`), `species`, `name?`,
+`breed?`, `sex` (default `unknown`), `size?`, `primaryColor?`, `distinctiveFeatures?`,
+`description`, `imageUrl?`, `status` (ciclo de vida, ver abajo), `helpCategory?`/`isEmergency?`
+(solo relevantes si `reportType` es `needs_help`/`injured`, `NULL` en cualquier otro caso — mismo
+patrón que `needStatus` en `Report`), ubicación (mismos campos que `Report`: `departmentName`/
+`municipalityName`/`localityName?`/`locationSource`/`lat`/`lng`/`approxLocationText?`),
+`happenedAt?` ("vista por última vez" o "encontrada el", opcional porque alguien angustiado puede
+no recordar la hora exacta), `isSheltered` (bool), `hidden` (bool, moderación), `createdById`,
+`lastConfirmedAt`.
+
+**`status` (`PetStatus`) es puramente de ciclo de vida** (`lost`/`sighted`/`sheltered`/
+`possible_match`/`found`/`reunited`/`needs_help`/`closed`/`outdated`) — a diferencia de
+`Report.status`, que sí mezcla moderación (`hidden`) con vigencia (`active`/`inactive`), acá
+**moderación vive en un campo `hidden` separado**: los valores de `PetStatus` ya están completamente
+ocupados por significado de ciclo de vida, no queda ninguno libre para "oculto por moderación" sin
+chocar con un estado real. `possible_match` existe en el enum desde ya aunque ningún código de Fase
+1 lo asigne todavía — evita una migración nueva solo por un valor de enum cuando llegue Fase 2
+(sugerencias automáticas de coincidencia).
+
+**`createPetReport(actor, input, photoBuffer?)`** (`pets.service.ts`) — publicar tampoco pide cuenta
+(mismo criterio que reportes/confirmar), resolviendo identidad guest vía `lib/guestIdentity.ts`.
+`initialStatus(reportType, isSheltered)`: `lost` → `lost`; `found` + resguardada → `sheltered`;
+`found` sin resguardar → `sighted`; `injured`/`needs_help` → `needs_help`. Si `isSheltered` (solo
+tiene efecto cuando `reportType === "found"` — cualquier otro valor lo ignora sin importar qué haya
+mandado el cliente), aplica `coarsenCoordinates()` (mismo helper que `isSensitive` en reportes) y
+reemplaza `approxLocationText` por un texto genérico: **nunca se persiste la dirección exacta de una
+vivienda privada** que está resguardando al animal. Si `reportType` es `needs_help`/`injured` y no
+llegó `helpCategory`, 400 — ese guard vive en el service, no en el schema Zod (mismo motivo que
+`needStatusSchema`: `validateBody` está tipado `AnyZodObject`, no acepta `.refine()`).
+
+**`POST /api/pets` es multipart, no JSON** — única excepción a la convención del resto del backend
+(donde subir una foto es siempre una llamada aparte, ej. `POST /reports/:id/evidence`): la foto
+viaja en el **mismo request** que el resto de los campos, porque el documento fuente pide un flujo
+de "menos de 60 segundos" con la foto como parte central, no un segundo paso que alguien angustiado
+podría no completar. Como multer puebla `req.body` con strings para *todo*, incluidos números y
+booleanos, `pets.schemas.ts` no puede usar `z.coerce.number()`/`z.coerce.boolean()` directo:
+- `requiredNumericString(min, max)` = `z.string().trim().min(1).pipe(z.coerce.number().gte(min).lte(max))`
+  — `z.coerce.number()` solo() fallaría silencioso: `Number("")` es `0` en JS, así que un `lat`/`lng`
+  vacío pasaría como `0,0` en vez de fallar la validación.
+- `booleanString` = `z.string().optional().transform((v) => v === "true")` — no `z.coerce.boolean()`:
+  `Boolean("false")` es `true`, cualquier string no vacío coacciona a verdadero. Mismo patrón que ya
+  usa `listQuerySchema.institutional` en `reports.schemas.ts`.
+
+Orden de middleware en `pets.routes.ts`: `createPetReportLimiter → uploadPetPhoto (multer) →
+validateBody(createPetReportSchema) → requireRecaptchaForGuests → handler` — multer puebla
+`req.body` antes de llamar a `next()`, así que `validateBody` corriendo después sí ve esos campos.
+
+**`updatePetStatus(id, userId, {status, note?})`** — `requireAuth`, **comunitario, no restringido al
+creador** (mismo criterio que `updateNeedStatus` en reportes: no se construyó una máquina nueva de
+verificación de dueño para una mascota que pudo haber creado un invitado sin sesión, que no tiene
+forma de demostrar después que es "suya"). A diferencia de `updateNeedStatus` (que además deja una
+línea en el timeline público del reporte), acá no existe timeline todavía — así que cada cambio
+escribe una entrada en el `AuditLog` genérico ya existente (`action: "pet.status_update"`, `metadata:
+{from, to, note}`, mismo mecanismo que ya usan `moderateReport`/`createReport`, cero modelo/UI
+nuevos, ya se ve en `/api/admin/audit-logs` y en `AdminPage.tsx`): "reunida" es la métrica norte del
+documento (la señal de que el sistema funcionó), así que un cambio malicioso sin ningún remedio/rastro
+visible es más grave acá que el caso análogo en reportes — el fix no cambia quién puede hacer el
+cambio, solo asegura que un moderador pueda verlo y revertirlo.
+
+**Moderación** (`petModeration.routes.ts`, montado en `/api/admin/pets`, `requireAuth +
+requireRole("moderator","admin")`): `GET /` (todas, incluye `hidden`), `PATCH /:id` con
+`action: "hide"|"unhide"|"delete"` — **sin** `markFalse`/`resolve`, esos son conceptos del
+`trustScore` que mascotas no tiene en Fase 1. `delete` es soft (`deletedAt`), igual que reportes.
+
+**Compartir por WhatsApp** (`petShareCard.service.ts`, reusa `lib/cardRenderer.ts`) —
+`determinePetShareStatus(pet)` clasifica en `lost`/`found`/`reunited`/`needs_help` (`reunited` gana
+siempre que `status === "reunited"`, sin importar el `reportType` original). **A diferencia de
+reportes, los 4 estados siempre generan imagen** — no hay eje de confianza que filtrar ("nunca
+glamorizar lo no confirmado" no aplica porque no hay noción de "no confirmado" para mascotas en Fase
+1. Copy en español por estado, incluido el cierre automático "🐾 YA VOLVIÓ A CASA" cuando el estado
+pasa a `reunited`. Puerta social propia en `/r/mascota/:id` (`petShareGateway.routes.ts`, montada
+**antes** de `/r/:id` de reportes en `app.ts` — el orden no importa estructuralmente, ya que
+`/mascota` es un segundo segmento que `/r/:id` de Express nunca matchea, pero se dejó así por
+claridad). `PetShareEvent` es un modelo propio, no una generalización de `ShareEvent` (que ya tiene
+una FK dura a `Report` con `onDelete: Cascade` — retocarlo a polimórfico tocaría una tabla que ya
+funciona por una ganancia mínima a esta escala).
+
+**Sin mecanismo de contacto directo (confirmado con el usuario, Fase 1).** El documento tampoco lo
+especifica (lo deja abierto). La reunificación depende de que la pieza compartida por WhatsApp
+circule y llegue a la persona correcta — un mecanismo de contacto (revelar correo/celular con
+advertencia, o "reportar posible coincidencia") queda como el primer punto de Fase 2, junto con las
+confirmaciones comunitarias que esa fase agrega.
+
 ## 5. Base de datos — modelo completo (`backend/prisma/schema.prisma`)
 
 MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, aplicadas en orden:
@@ -477,7 +583,12 @@ valores de `city` que existían a su departamento real, y `DROP COLUMN city` en 
 "Cobertura territorial nacional" en 4.2 y la decisión correspondiente en la sección 10) →
 `need_commitments` (tabla nueva `NeedCommitment`, sin backfill — no reemplaza ni toca ninguna
 columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
-`share_events` (tabla nueva `ShareEvent`, sin backfill, ver "Compartir por WhatsApp" en 4.6).
+`share_events` (tabla nueva `ShareEvent`, sin backfill, ver "Compartir por WhatsApp" en 4.6) →
+`pet_reports` (tablas nuevas `PetReport`/`PetShareEvent` + 6 enums, sin backfill, ver 4.7) →
+`pet_report_hidden_flag` (columna `hidden` en `PetReport`, agregada como segunda migración chica
+después de notar, ya implementando el service, que `PetStatus` no tenía ningún valor libre para
+moderación — más seguro que editar la migración anterior ya aplicada, que hubiera generado drift en
+el checksum que Prisma guarda por migración).
 
 | Modelo | Para qué |
 |---|---|
@@ -498,6 +609,8 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
 | `Session` | Refresh tokens activos (hash, no el token) |
 | `SecurityEvent` | Eventos de auth (login/logout/fallos) — best-effort, nunca bloquea el flujo |
 | `PushSubscription` | Suscripción push por endpoint, sin dueño |
+| `PetReport` | Mascota perdida/encontrada/herida/necesita ayuda — ver 4.7 |
+| `PetShareEvent` | Telemetría best-effort de compartir un `PetReport`, propio (no reusa `ShareEvent`) — ver 4.7 |
 
 `ReputationLevel` (enum): `nuevo` → `colaborador` → `colaborador_confiable` →
 `voluntario_verificado` → `organizacion` → `entidad_institucional`.
@@ -508,7 +621,13 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
 `CommitmentStatus` (enum, Fase A de "PROMPT MAESTRO v3"): `committed` / `on_the_way` / `delivered` /
 `cancelled` — estado de un `NeedCommitment`, ver 4.2.
 `ShareChannel` (enum): `whatsapp` / `web_share` / `copy_link` / `save_image` — canal de un
-`ShareEvent`, ver 4.6.
+`ShareEvent`, ver 4.6 (reusado también por `PetShareEvent`, ver 4.7).
+
+Enums de mascotas (ver 4.7): `PetReportType` (`lost`/`found`/`injured`/`needs_help`), `PetSpecies`
+(`dog`/`cat`/`bird`/`rabbit`/`horse`/`other`), `PetSex` (`male`/`female`/`unknown`), `PetSize`
+(`small`/`medium`/`large`), `PetStatus` (`lost`/`sighted`/`sheltered`/`possible_match`/`found`/
+`reunited`/`needs_help`/`closed`/`outdated`), `PetHelpCategory` (`veterinary`/`food`/`water`/
+`transport`/`shelter`/`rescue`/`other`).
 
 ## 6. Frontend — arquitectura
 
@@ -535,6 +654,11 @@ frontend/src/
     ShareSheet.tsx             — bottom sheet de compartir (WhatsApp/otra app/copiar/guardar), ver 6.10
     categoryStyle.ts           — GROUP_META: color/label/badge por CategoryGroup (única fuente de verdad de estilo por categoría)
     needStatusStyle.ts          — NEED_STATUS_META: emoji/badge/color de marcador por NeedStatus (Fase 1) — el texto sigue viniendo del backend (needStatusLabel)
+    PetCard.tsx                — tarjeta de mascota en listados, ver 6.13
+    PetStatusBadge.tsx          — pill de PetStatus, ver 6.13
+    PetMapLayer.tsx             — mapa Leaflet propio para /mascotas (no generaliza MapView.tsx), ver 6.13
+    PetShareSheet.tsx           — casi duplicado de ShareSheet.tsx apuntando a los endpoints de mascotas, ver 6.13
+    petStatusStyle.ts           — PET_STATUS_META + labels de species/reportType/helpCategory — a diferencia de needStatusStyle.ts, acá el texto SÍ vive en el frontend (el backend nunca calculó labels para mascotas), ver 6.13
   data/colombiaLocations.ts   — catálogo departamento→municipios de Colombia, ver 6.8
   utils/
     time.ts                  — relativeTime() ("hace 5 min")
@@ -565,8 +689,11 @@ Un único `request<T>()` centraliza todo el fetch. Detalles importantes:
 | `/reporte/:id` | `ReportDetailPage` | lectura pública; confirmar es público (ver 6.11); denunciar/actualizar/evidencia/estado de necesidad requieren login (redirige a `/login`) |
 | `/login`, `/registro` | `LoginPage`, `RegisterPage` | público |
 | `/perfil` | `ProfilePage` | requiere sesión |
-| `/admin` | `AdminPage` | requiere rol `moderator`/`admin` |
+| `/admin` | `AdminPage` | requiere rol `moderator`/`admin` — incluye moderación de mascotas, ver 6.13 |
 | `/privacidad` | `PrivacyPolicyPage` | público — Habeas Data, ver 6.12 |
+| `/mascotas` | `PetsPage` | público (con o sin cuenta) — ver 6.13 |
+| `/mascotas/reportar` | `PetReportPage` | público (con o sin cuenta) — ver 6.13 |
+| `/mascotas/:id` | `PetDetailPage` | lectura pública; cambiar estado requiere sesión — ver 6.13 |
 
 ### 6.3 Publicar sin cuenta (frontend)
 
@@ -815,6 +942,59 @@ quitando barreras de fricción para publicar/confirmar en una emergencia, y agre
 bloqueante justo ahí reintroduciría el mismo tipo de fricción. Informa la finalidad del tratamiento
 igual (que es la obligación central de Habeas Data) sin bloquear el flujo.
 
+### 6.13 Mascotas (frontend)
+
+**`PetsPage.tsx`** (`/mascotas`) — 3 acciones principales (PERDÍ MI MASCOTA / ENCONTRÉ UNA MASCOTA /
+NECESITA AYUDA — **sin** "QUIERO AYUDAR", eso es Fase 3 del documento, sin `PetResource` todavía),
+filtros de departamento/municipio (mismo patrón que `HomePage`) + chips por `reportType`, lista de
+`PetCard`, y un mapa propio (`PetMapLayer`, ver abajo) — mascotas **no** se mete en los filtros del
+mapa principal de reportes, tiene el suyo, más chico.
+
+**`PetReportPage.tsx`** (`/mascotas/reportar?type=lost|found|needs_help`) — una sola página con
+secciones reveladas progresivamente (mismo patrón que `ReportFormPage.tsx`, no un wizard separado
+por rutas). El toggle de 3 vías se precarga desde el query param pero se puede cambiar después de
+aterrizar (igual que el toggle de grupo en `ReportFormPage`). Si `reportType === "found"`, aparece
+el toggle "¿La tienes contigo ahora?" (`isSheltered`) — la distinción "la vi" vs. "la tengo
+resguardada" que pide el documento, con aviso de que la dirección exacta no se muestra si está
+resguardada. Si es `needs_help`/`injured`, aparece el select de `helpCategory` (obligatorio) +
+checkbox de urgencia. Reusa `LocationSelector` y `GuestContactFields` (trae el aviso de Habeas Data
+gratis, ver 6.12) tal cual. **La foto va en el mismo `FormData` que el resto de los campos** (ver
+4.7) — `api.createPetReport()` arma el `FormData` a mano (números → string, booleanos →
+`"true"`/`"false"` explícito, nunca omitidos — `booleanString` en el backend lee el string literal)
+y pasa por el `request()` compartido de `api/client.ts`, **nunca un `fetch` crudo** como
+`submitEvidence` en `ReportDetailPage.tsx` — ese patrón nunca manda el header `Authorization` (solo
+la cookie, que `authenticate` en el backend nunca lee), así que un usuario con sesión que reportara
+una mascota por ese camino perdería su atribución silenciosamente y terminaría como invitado igual
+— bug real que este componente evita desde el diseño, no una precaución hipotética.
+
+**`PetDetailPage.tsx`** (`/mascotas/:id`) — detalle + `PetStatusBadge` + banner de celebración fijo
+cuando `status === "reunited"` ("🎉 ¡Nombre ya volvió a casa!") + botón COMPARTIR (`PetShareSheet`)
++ control de cambio de estado. El control de estado se oculta detrás de `!profile` (muestra "Inicia
+sesión para actualizar el estado" en su lugar) — a diferencia de confirmar reportes (6.11, que se
+abrió del todo), cambiar el estado de una mascota **sigue** pidiendo cuenta, mismo criterio que
+`updateNeedStatus` de reportes (6.7): es una acción con más impacto por intento que un simple voto.
+El select de estados excluye `possible_match` a propósito — Fase 2, ningún flujo de Fase 1 lo
+produce ni lo consume.
+
+**`PetMapLayer.tsx`** — copia del setup de Leaflet ya probado en `MapView.tsx` (`CircleMarker`,
+nunca `Marker` — mismo bug de íconos rotos con Vite) en vez de generalizar ese componente, que está
+tipado específicamente a `Report[]`.
+
+**`PetShareSheet.tsx`** — casi duplicado de `ShareSheet.tsx` apuntando a `api.getPetShareCard`/
+`api.recordPetShareEvent` en vez de los de reportes — el propio documento sugiere este componente
+separado. A diferencia del original, nunca debería mostrar el estado "solo enlace, sin imagen" en
+la práctica (los 4 estados de mascota siempre generan imagen, ver 4.7), pero el fallback se deja
+igual por si la subida a almacenamiento falla.
+
+**Integración con el resto de la app**: `Navbar.tsx` gana un `NavLink` a `/mascotas` dentro del
+fragmento `rest` ya compartido entre desktop y menú hamburguesa (aparece en ambos sin JSX nuevo para
+mobile). `HomePage.tsx` gana una sección propia "🐾 Mascotas" (no una 5ª tarjeta en el grid de
+"Situación actual", que ya es `grid-cols-4` completo) con conteo en vivo
+(`api.getPetReports({pageSize: 1}).total`) y link a `/mascotas`. `AdminPage.tsx` gana una sección
+apilada con su propia tabla (`PetsTable`, no una generalización de `ReportsTable`, que está tipada a
+`Report[]` con columnas específicas como `TrustBadge`) — solo hide/unhide/delete, sin
+markFalse/resolve (conceptos de `trustScore` que mascotas no tiene).
+
 ## 7. Flujos de punta a punta
 
 **Reportar sin cuenta:** usuario en `/reportar` o `/necesito-ayuda` sin sesión → llena el
@@ -856,6 +1036,16 @@ catálogo) → coloca el pin en el mapa embebido → `POST /api/reports` con `de
 `municipalityName` libres, sin ningún catálogo/enum del lado del backend que pueda rechazarlo → el
 reporte queda igual de visible que uno de Cali, solo que fuera del rango de los chips de acceso
 rápido del home (se encuentra filtrando por su departamento/municipio o navegando el mapa).
+
+**Reportar y reunificar una mascota:** usuario en `/mascotas` sin sesión → PERDÍ MI MASCOTA →
+`/mascotas/reportar?type=lost` con foto + ubicación + nombre/correo → `POST /api/pets` (multipart,
+sin `Authorization`) → `resolveGuestContact` crea/reutiliza un `User` guest (mismo mecanismo que
+reportes) → `status: "lost"` → aparece en `/mascotas` y en su mapa → cualquiera con cuenta comparte
+por WhatsApp (`PetShareSheet`, genera pieza + texto) → alguien la reconoce por la pieza compartida
+(sin mecanismo de contacto en Fase 1 — la reunificación depende de que el enlace llegue a la persona
+correcta) → una persona con cuenta entra al detalle y cambia el estado a `reunited` (comunitario, no
+solo el creador) → banner de cierre "🎉 ya volvió a casa" + el cambio queda en `AuditLog` para
+moderación si hiciera falta revertirlo.
 
 ## 8. Desarrollo local
 
@@ -995,6 +1185,45 @@ migraciones; el admin real se crea aparte con password generada.
   público en `/reporte/:id` y en toda respuesta de la API — un código corto ganaría estética, no
   privacidad, y hubiera sido la "infraestructura nueva" que el documento fuente pide evitar por una
   ganancia cosmética.
+- **Mascotas no comparte tablas/servicios con reportes, solo dos extracciones a `lib/`.** Se evaluó
+  generalizar `ShareEvent`/`ShareCard` a polimórfico y se descartó — tocaría código de reportes que
+  ya funciona por una ganancia mínima a esta escala (dos módulos, no veinte). Lo único que sí se
+  extrajo (`cardRenderer.ts`, `guestIdentity.ts`) era código genérico de verdad, sin ninguna
+  referencia a `Report` en su lógica.
+- **`PetReport.hidden` es un campo separado de `PetReport.status`, a diferencia de `Report.status`**
+  (que sí mezcla moderación con vigencia). Se descubrió a mitad de implementación que los 9 valores
+  de `PetStatus` ya estaban completamente ocupados por significado de ciclo de vida — no había forma
+  de meter "oculto" ahí sin chocar con un estado real, así que se agregó una columna nueva vía una
+  segunda migración chica en vez de reabrir la primera ya aplicada.
+- **Cambiar el estado de una mascota escribe en `AuditLog`, aunque sigue siendo comunitario/abierto
+  (no restringido al creador).** Es la única diferencia real de este endpoint respecto a su análogo
+  de reportes (`updateNeedStatus`, que ni siquiera necesita esto porque ya deja rastro en el
+  timeline público) — se agregó porque "reunida" es la métrica norte del documento (la señal de que
+  el sistema cumplió su propósito), así que un cambio malicioso sin ningún remedio visible se juzgó
+  más grave acá que el caso análogo en reportes. No cambia quién puede hacer el cambio.
+- **`POST /api/pets` es multipart con la foto en el mismo request — el único endpoint de escritura
+  de todo el backend con esta forma.** Cada otro endpoint que sube un archivo lo hace como llamada
+  aparte (`POST /reports/:id/evidence`). Se decidió así porque el documento fuente pide
+  explícitamente un flujo de "menos de 60 segundos" con la foto como parte central, no un segundo
+  paso opcional que alguien angustiado buscando a su mascota podría no completar nunca.
+- **Los 4 estados de mascota (`lost`/`found`/`reunited`/`needs_help`) siempre generan pieza de
+  compartir, a diferencia de reportes** (donde solo 4 de 6 estados de confianza la generan). No es
+  una inconsistencia — mascotas no tiene ningún eje de confianza en Fase 1, así que no hay nada
+  análogo a "no glamorizar lo no confirmado" que filtrar. La contrapartida práctica: en un entorno
+  sin credenciales reales de `STORAGE_*` (como este dev local), literalmente cualquier llamada a
+  `GET /pets/:id/share-card` intenta subir a almacenamiento y falla — a diferencia de reportes, que
+  sí tiene un camino (`unconfirmed`) que nunca toca almacenamiento y por eso es testeable sin
+  credenciales reales. `PetShareSheet.tsx`/`getPublicPetPreview()` degradan con gracia igual (ver
+  4.7/6.13), solo que el caso "con imagen real" no se puede verificar end-to-end sin credenciales de
+  Supabase Storage reales — verificado a mano con un script suelto (mismo criterio que 4.6) en vez
+  de vía HTTP.
+- **Sin mecanismo de contacto directo entre quien reporta y quien encuentra/reconoce una mascota en
+  Fase 1** — confirmado explícitamente con el usuario durante la planeación, no una omisión. El
+  documento fuente tampoco lo especifica (lo deja abierto para una fase posterior). La reunificación
+  depende de que la pieza compartida por WhatsApp circule y llegue a la persona correcta, igual que
+  ya pasa hoy de forma orgánica en los grupos comunitarios — un mecanismo de contacto (revelar
+  correo/celular con advertencia, o "reportar posible coincidencia") queda como el primer punto de
+  Fase 2, junto con las confirmaciones comunitarias que esa fase agrega.
 
 ## 11. Subagentes de Claude Code en este repo (`.claude/agents/`)
 
