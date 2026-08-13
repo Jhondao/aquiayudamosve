@@ -66,6 +66,7 @@ Este repo incluye subagentes de Claude Code en [.claude/agents/](.claude/agents/
 - `backend-validator`: typecheck, tests, drift de Prisma, build, cobertura de env vars
 - `frontend-validator`: typecheck, build, wiring de la API, rutas, CSP del mapa
 - `deploy-readiness`: secretos filtrados, CORS, config de storage, manejo de cookies cross-origin
+- `seo-specialist`: meta tags, Open Graph/Twitter cards, robots.txt, sitemap.xml — a diferencia de los anteriores, puede aplicar los cambios directamente, no solo reportarlos
 
 ---
 
