@@ -6,6 +6,7 @@ import { applyDecay, determineTrustLevel, recomputeReportTrustScore, trustLevelC
 import { rewardUsefulConfirmation } from "../trust/reputation.service";
 import { SENSITIVE_CATEGORY_KEYS, needStatusLabels, type NeedStatusValue, type CommitmentStatusValue } from "./reports.schemas";
 import { broadcastPush } from "../../lib/push";
+import { resolveGuestContact, syntheticEmailForPhone } from "../../lib/guestIdentity";
 
 const reportWithRelations = Prisma.validator<Prisma.ReportDefaultArgs>()({
   include: {
@@ -108,58 +109,6 @@ async function loadReport(id: string) {
   const report = await prisma.report.findUnique({ where: { id }, ...reportWithRelations });
   if (!report || report.deletedAt) throw new HttpError(404, "Reporte no encontrado.");
   return report;
-}
-
-/**
- * Publishing without a session is allowed (community-first: no signup wall
- * to ask for help or report). We still need a stable identity to attach the
- * action to for the trust/reputation system, so an email either reuses or
- * creates a passwordless "guest" User. If the email already belongs to a
- * real account, we refuse — otherwise anyone could act under someone else's
- * identity just by typing their email.
- *
- * `phone`/`displayName` are optional: report creation always passes both
- * (its own schema requires them together), but confirming a report without
- * an account only requires a name + email — phone is a nice-to-have there,
- * not an identity requirement. `displayName` only applies when the guest
- * User is created for the first time; reusing an existing guest identity
- * never overwrites the name it already has (a later confirm action isn't
- * license to rename someone's earlier report identity).
- */
-async function resolveGuestContact(email: string, phone?: string, displayName?: string) {
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    if (!existing.isGuest) {
-      throw new HttpError(409, "Ese correo ya tiene una cuenta. Inicia sesión para continuar.");
-    }
-    if (phone && existing.phone !== phone) {
-      await prisma.user.update({ where: { id: existing.id }, data: { phone } });
-    }
-    return existing.id;
-  }
-
-  const created = await prisma.user.create({
-    data: {
-      email,
-      phone: phone ?? null,
-      isGuest: true,
-      displayName: displayName?.trim() || email.split("@")[0],
-      reputation: { create: { score: 0, level: "nuevo" } },
-    },
-  });
-  return created.id;
-}
-
-// `User.email` es NOT NULL + @unique — un guest que solo da celular (sin
-// correo, ver confirmReport) igual necesita una fila con un email real para
-// esa columna. Se sintetiza uno determinístico a partir del celular, nunca
-// mostrado en la UI, solo para satisfacer la restricción del modelo de
-// datos. Dos confirmaciones con el mismo celular terminan bajo la misma
-// identidad guest a propósito — mismo criterio que ya aplica hoy por correo
-// repetido.
-function syntheticEmailForPhone(phone: string): string {
-  const digits = phone.replace(/[^0-9]/g, "");
-  return `tel-${digits}@guest.aquiayudamosve.local`;
 }
 
 export async function createReport(
