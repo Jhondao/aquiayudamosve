@@ -54,3 +54,15 @@ export const guestActionLimiter = rateLimit({
   skip: (req) => Boolean(req.user),
   message: { error: "Demasiadas acciones sin cuenta desde esta red. Espera antes de continuar o inicia sesión." },
 });
+
+// Reportes de mascotas: instancia propia, no comparte presupuesto con
+// createReportLimiter — alguien reportando varios puntos de ayuda no debería
+// quedarse sin poder reportar también una mascota perdida.
+export const createPetReportLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.user?.id ?? req.ip ?? "anon",
+  message: { error: "Has reportado varias mascotas recientemente. Espera antes de reportar otra." },
+});
