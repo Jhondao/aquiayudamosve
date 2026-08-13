@@ -125,7 +125,8 @@ export default function ReportDetailPage() {
       </div>
       <h1 className="mt-2 text-xl font-extrabold">{report.title}</h1>
       <p className="text-xs text-slate-400">
-        {report.approxLocationText} · {report.city}
+        {[report.approxLocationText, report.localityName].filter(Boolean).join(" · ") || "Ubicación aproximada"} ·{" "}
+        {report.municipalityName}, {report.departmentName}
       </p>
       <p className="mt-3 text-sm">{report.description}</p>
 

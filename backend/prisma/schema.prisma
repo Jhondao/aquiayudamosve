@@ -53,6 +53,16 @@ enum NeedStatus {
   desactualizado
 }
 
+// ACTUALIZACIÓN DEL PROMPT MAESTRO — cómo se obtuvo el pin de un reporte,
+// no si existe (todo reporte siempre tiene lat/lng reales). gps: geolocalización
+// del navegador. catalog: eligió departamento/municipio del catálogo y el
+// mapa embebido centró ahí. manual: escribió departamento/municipio libremente.
+enum LocationSource {
+  gps
+  catalog
+  manual
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
@@ -139,8 +149,21 @@ model Report {
   categoryId         String
   title              String
   description        String       @db.Text
-  city               String
-  approxLocationText String
+  // ACTUALIZACIÓN DEL PROMPT MAESTRO — cobertura nacional en vez de solo
+  // Cali. Texto libre, nunca contra un catálogo/enum (ver
+  // reports.schemas.ts): el backend nunca bloquea una publicación porque el
+  // lugar no esté en una lista predeterminada.
+  departmentName     String
+  municipalityName   String
+  // Vereda/corregimiento/barrio + su nombre juntos (ej. "Vereda El Jardín")
+  // — nunca separado en tipo+nombre, nada en el producto filtra por eso.
+  localityName       String?
+  locationSource     LocationSource @default(catalog)
+  // Punto de referencia libre y opcional ("cerca al puente verde"). Antes
+  // era obligatorio y el único texto de ubicación; con
+  // departamento/municipio/localidad ya estructurados, forzarlo siempre
+  // pediría el mismo dato dos veces.
+  approxLocationText String?
   lat                Float
   lng                Float
   status             ReportStatus @default(active)
@@ -170,7 +193,7 @@ model Report {
   updates       ReportUpdate[]
   flags         ReportFlag[]
 
-  @@index([city])
+  @@index([departmentName, municipalityName])
   @@index([categoryId])
   @@index([status])
   @@index([lat, lng])

@@ -7,11 +7,13 @@ que es más corto y orientado a desarrollo/despliegue).
 
 ## 1. Qué es y por qué existe
 
-**AquiAyudamosVE** es una plataforma web para coordinar ayuda tras el terremoto del 10 de agosto
-de 2026 en Cali, Colombia. Cualquier persona puede reportar un punto de ayuda disponible (centro
-de acopio, albergue, agua, etc.) o pedir ayuda (necesidad), **sin necesidad de crear una cuenta**.
-La comunidad confirma o marca como incorrecta la información publicada, y un sistema de
-reputación/confianza hace que lo más confirmado y reciente pese más que lo viejo o sin verificar.
+**AquiAyudamosVE** es una plataforma web para coordinar ayuda comunitaria en cualquier territorio de
+Colombia, nacida como respuesta al terremoto del 10 de agosto de 2026 en Cali. Cualquier persona
+puede reportar un punto de ayuda disponible (centro de acopio, albergue, agua, etc.) o pedir ayuda
+(necesidad), **sin necesidad de crear una cuenta**, desde cualquier departamento, municipio, vereda,
+corregimiento o barrio del país. La comunidad confirma o marca como incorrecta la información
+publicada, y un sistema de reputación/confianza hace que lo más confirmado y reciente pese más que
+lo viejo o sin verificar.
 
 La razón de ser: durante una emergencia la información sobre qué puntos necesitan ayuda, cuáles ya
 están saturados y qué se necesita exactamente cambia cada pocos minutos y se dispersa en redes
@@ -22,16 +24,19 @@ la edite a mano.
 **Producción:** frontend en `https://aquiayudamosve.netlify.app`, backend en
 `https://aquiayudamosve.onrender.com`. Ver sección 9 (Despliegue).
 
-**Estado del alcance:** la app está cerrada a **Cali únicamente** por ahora (`CITIES` en el
-frontend solo tiene `"Cali"`, ver sección 4.3) — el modelo de datos soporta multi-ciudad
-(`Pereira`, `Manizales`, `Armenia`, `Quibdó` están en el enum/constantes pero deshabilitadas en la UI).
+**Estado del alcance:** cobertura nacional (**"ACTUALIZACIÓN DEL PROMPT MAESTRO"** implementada) —
+ya no hay ninguna lista cerrada de ciudades. `Report.departmentName`/`municipalityName` son texto
+libre, nunca validados contra un catálogo (ver sección 4.2). Las 6 zonas del terremoto (Cali,
+Pereira, Manizales, Armenia, Quibdó, Popayán) solo aparecen como accesos rápidos en la UI, no como
+un límite de qué se puede reportar.
 
-**Evolución hacia coordinación (PROMPT MAESTRO):** el usuario pegó un documento que pide evolucionar
-la app de "mapa de reportes" a un sistema de coordinación de necesidades y capacidades, ordenado en
-6 fases explícitas por el documento mismo. **Fase 1 (estado ampliado de necesidades) ya está
-implementada** — ver sección 4.2. Fases 2–6 (módulo de recursos/servicios, compromisos "puedo
-cubrir X", matching, notificaciones segmentadas, analítica) son roadmap, no código — el documento
-mismo pide evolución incremental, sin reemplazar lo que ya funciona.
+**Evolución hacia coordinación (otro documento, "PROMPT MAESTRO" original):** el usuario también
+pegó un documento previo que pide evolucionar la app de "mapa de reportes" a un sistema de
+coordinación de necesidades y capacidades, ordenado en 6 fases explícitas por el documento mismo.
+**Fase 1 (estado ampliado de necesidades) ya está implementada** — ver sección 4.2. Fases 2–6
+(módulo de recursos/servicios, compromisos "puedo cubrir X", matching, notificaciones segmentadas,
+analítica) son roadmap, no código — el documento mismo pide evolución incremental, sin reemplazar
+lo que ya funciona.
 
 ## 2. Stack
 
@@ -137,10 +142,12 @@ Cada intento de login/registro/logout se registra best-effort en `SecurityEvent`
 
 ### 4.2 Reports (`modules/reports/`) — el módulo central
 
-Modelo `Report`: categoría, título, descripción, ciudad, ubicación aproximada (texto + lat/lng),
-`status` (`active`/`inactive`/`hidden`), `trustScore`, `createdById`, `organizationId?`,
+Modelo `Report`: categoría, título, descripción, ubicación (`departmentName`/`municipalityName`
+requeridos, `localityName`/`approxLocationText` opcionales, `locationSource`, lat/lng — ver más
+abajo), `status` (`active`/`inactive`/`hidden`), `trustScore`, `createdById`, `organizationId?`,
 `isSensitive`, `lastConfirmedAt`, más `needStatus`/`quantityNeeded`/`quantityUnit`/`quantityReceived`
-(Fase 1, ver más abajo). Relaciones: `confirmations`, `evidence`, `updates`, `flags`.
+(Fase 1 del PROMPT MAESTRO original, ver más abajo). Relaciones: `confirmations`, `evidence`,
+`updates`, `flags`.
 
 **Publicar sin cuenta (el cambio más importante del proyecto, agregado en el PR
 "open-community-reporting"):** `POST /api/reports` **no requiere sesión.** Si `req.user` no está
@@ -179,10 +186,35 @@ el reporte de otro sigue pidiendo cuenta):
   salga del proceso, y la key es un UUID random (no sobrevive nada del nombre/ruta original).
 
 Lectura (públicos, sin auth):
-- `GET /` — lista paginada, filtrable por `city`/`group`/`institutional`.
-- `GET /nearby` — reportes dentro de un radio (Haversine) de una categoría/ciudad — se usa en el
-  formulario de reportar para avisar "ya existe un reporte similar cerca" antes de duplicar.
+- `GET /` — lista paginada, filtrable por `departmentName`/`municipalityName`/`group`/`institutional`.
+- `GET /nearby` — reportes dentro de un radio (Haversine) de una categoría — **sin** filtro de
+  lugar (ver "Cobertura territorial nacional" más abajo, incluye por qué se quitó y el bug que eso
+  arregló). Se usa tanto para "ya existe un reporte similar cerca" en el formulario de reportar
+  como para el filtro "Cerca de mí" del home.
 - `GET /:id` — detalle completo.
+
+**Cobertura territorial nacional (`ACTUALIZACIÓN DEL PROMPT MAESTRO`):** la app ya no está cerrada
+a una lista de ciudades. `departmentName`/`municipalityName` son **texto libre** en el schema Zod
+(`z.string().trim().min(2).max(100)`, sin `z.enum()`) — el backend nunca valida contra ningún
+catálogo, para que un lugar que no esté en ninguna lista nunca bloquee una publicación (esa regla
+viene explícita del documento). `localityName` (vereda/corregimiento/barrio + su nombre juntos, ej.
+"Vereda El Jardín") es opcional y también libre — no hay tipo/nombre separados, ni catálogo de
+sub-nivel municipal. `locationSource` (`gps`/`catalog`/`manual`) documenta cómo se obtuvo el pin,
+no si existe — todo reporte tiene `lat`/`lng` reales siempre, sin excepción (ver 6.7, el mapa
+embebido de `LocationSelector` exige un pin en los 3 modos).
+
+`approxLocationText` (antes obligatorio, la única forma de "punto de referencia") pasó a **opcional**
+— con departamento/municipio/localidad ya estructurados, forzarlo siempre pediría el mismo dato dos
+veces. Puede ser `null` en la respuesta de la API; el frontend hace fallback a `localityName` o al
+municipio (ver `ReportCard.tsx`, `MapView.tsx`).
+
+`findNearbyReports` (`reports.service.ts`) ya no filtra por lugar en absoluto — antes requería
+`city` exacto en el `WHERE` *antes* de calcular distancia, lo que impedía detectar duplicados entre
+dos reportes a 50m con distinto texto de ciudad (el bug que la sección 29 del documento señala
+explícitamente). Ahora usa un **bounding-box** de lat/lng (aprovecha el índice
+`@@index([lat,lng])` ya existente, no un índice espacial real) antes de filtrar por Haversine —
+sin esto, un `take` fijo sin `orderBy` podía devolver 0 resultados a escala nacional aunque sí
+hubiera reportes cercanos reales.
 
 **Estado de necesidades (Fase 1 del PROMPT MAESTRO):** reportes de grupo `necesidad` (solo esos —
 el resto queda con estos campos en `NULL`) tienen un `needStatus`: `necesitamos` → `en_camino` →
@@ -242,7 +274,7 @@ se asignan a mano (verificación de organización), nunca subiendo por score.
 Todo bajo `requireAuth + requireRole("moderator", "admin")`, montado en `/api/admin`:
 - `GET /reports/flagged` — reportes ocultos o con flags sin resolver.
 - `GET /reports` — **todos** los reportes (no paginado, a propósito: revisión de admin espera ver
-  todo), filtrable por city/status.
+  todo), filtrable por departmentName/municipalityName/status.
 - `PATCH /reports/:id` — acción: `hide` / `unhide` / `markFalse` (oculta + trustScore a 0 +
   penaliza reputación del autor + resuelve flags) / `resolve` (ya no vigente, no es un juicio de
   veracidad) / `delete` (soft delete — `deletedAt`, desaparece de todo listado pero queda para
@@ -273,7 +305,11 @@ MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, apl
 `init` → `guest_reports` (passwordHash nullable + phone + isGuest) →
 `push_subscriptions` → `widen_push_endpoint` (VarChar 500) →
 `need_status` (needStatus + quantityNeeded/Unit/Received en `Report`, con backfill de
-`needStatus = 'necesitamos'` para los reportes de grupo `necesidad` ya existentes).
+`needStatus = 'necesitamos'` para los reportes de grupo `necesidad` ya existentes) →
+`territory_coverage` (reemplaza la columna `city` por `departmentName`/`municipalityName`/
+`localityName`/`locationSource`, `approxLocationText` pasa a nullable, con backfill de los 5
+valores de `city` que existían a su departamento real, y `DROP COLUMN city` en el mismo paso — ver
+"Cobertura territorial nacional" en 4.2 y la decisión correspondiente en la sección 10).
 
 | Modelo | Para qué |
 |---|---|
@@ -296,6 +332,7 @@ MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, apl
 `ReputationLevel` (enum): `nuevo` → `colaborador` → `colaborador_confiable` →
 `voluntario_verificado` → `organizacion` → `entidad_institucional`.
 `CategoryGroup` (enum): `ayuda` / `necesidad` / `critico` / `info`.
+`LocationSource` (enum): `gps` / `catalog` / `manual` — cómo se obtuvo el pin de un `Report`.
 `NeedStatus` (enum, Fase 1): `necesitamos` / `en_camino` / `parcialmente_cubierto` / `cubierto` /
 `excedente` / `desactualizado` — solo se usa en `Report` cuando `category.group === "necesidad"`.
 
@@ -313,12 +350,14 @@ frontend/src/
     Navbar.tsx              — logo + nav responsive (hamburguesa en móvil)
     Footer.tsx               — nota de proyecto sin fines de lucro
     GuestContactFields.tsx    — inputs de email/celular reusados en NeedHelpPage y ReportFormPage
-    MapView.tsx               — mapa Leaflet con markers por categoría
+    LocationSelector.tsx      — GPS/catálogo/manual + mapa embebido de un pin, ver 6.8
+    MapView.tsx               — mapa Leaflet con markers por categoría, centra con fitBounds (ver 6.8)
     ReportCard.tsx            — tarjeta de reporte en listados
     TrustBadge.tsx            — pill de nivel de confianza
     PushToggle.tsx            — activar/desactivar notificaciones push
     categoryStyle.ts           — GROUP_META: color/label/badge por CategoryGroup (única fuente de verdad de estilo por categoría)
     needStatusStyle.ts          — NEED_STATUS_META: emoji/badge/color de marcador por NeedStatus (Fase 1) — el texto sigue viniendo del backend (needStatusLabel)
+  data/colombiaLocations.ts   — catálogo departamento→municipios de Colombia, ver 6.8
   utils/time.ts              — relativeTime() ("hace 5 min")
   styles/index.css            — Tailwind + estilos globales (incluye .map-tag para las etiquetas del mapa)
 ```
@@ -377,12 +416,20 @@ No es una lista simple. Estructura de arriba a abajo (todo en un solo componente
    urgente, aunque sigue visible (en verde) en el mapa y en "Todos los reportes".
 7. **¿Cómo puedes ayudar?** — accesos directos (donaciones/transporte/voluntariado) que filtran la
    lista de abajo por categoría y hacen scroll a ella.
-8. **Todos los reportes** — selector de ciudad, los dos CTA grandes (Pedir ayuda / Reportar un
-   punto), filtros por grupo, y la lista completa (`ReportCard` por cada uno).
+8. **Todos los reportes** — filtro de territorio (chips de zonas prioritarias + "Cerca de mí" +
+   selects departamento/municipio, ver 6.7), los dos CTA grandes (Pedir ayuda / Reportar un punto),
+   filtros por grupo, y la lista completa (`ReportCard` por cada uno).
 
-Todo carga una sola vez (`api.getReports({})`, sin filtros de servidor) y el filtrado por
-ciudad/categoría/grupo es **client-side** (`useMemo` sobre `allReports`) — la paginación del
-backend no se usa desde aquí.
+**Carga de datos (`ACTUALIZACIÓN DEL PROMPT MAESTRO` — antes cargaba todo sin filtro):** `load()`
+depende de `[department, municipality, nearMe]` y vuelve a pedir al servidor en cada cambio — sin
+filtro de territorio, `api.getReports({ pageSize: 50 })` (nacional, paginado, más recientes
+primero — el documento pide explícitamente no obligar a elegir territorio antes de entrar a la
+app); con departamento/municipio, filtro server-side; con "Cerca de mí", `api.getNearby({ lat, lng,
+radiusMeters: 20_000 })`. Solo el filtro por **grupo/categoría** (`GROUP_FILTERS`, `categoryFilter`)
+sigue siendo client-side sobre lo que ya llegó — cambiar de grupo no debería disparar otro fetch.
+Efecto colateral intencional: `stats`/`urgentNeeds` (`useMemo` sobre `allReports`) quedan acotados
+al territorio filtrado automáticamente, porque `allReports` ya es lo que el servidor devolvió
+filtrado — nadie en Chocó ve "situación actual" de Cali por accidente.
 
 ### 6.5 PWA y notificaciones push (frontend)
 
@@ -429,6 +476,46 @@ confirmar/denunciar (redirige a `/login` si no hay sesión). `ReportCard.tsx` y 
 marcador** a verde/azul cuando `needStatus` es `cubierto`/`excedente` — eso es lo que evita que
 alguien lleve ayuda a un punto ya resuelto sin tener que abrir el popup para enterarse.
 
+### 6.8 Cobertura territorial y `LocationSelector` (`ACTUALIZACIÓN DEL PROMPT MAESTRO`)
+
+**`frontend/src/data/colombiaLocations.ts`**: `COLOMBIA_LOCATIONS: { name: string; municipalities: string[] }[]`
+— 33 departamentos (32 + Bogotá D.C. como entidad propia), ~1,104 municipios reales, transcrito de
+un dataset público basado en datos DANE (`marcovega/colombia-json`). El dataset original tenía
+"Bogotá" listado como un municipio más dentro de Cundinamarca — se corrigió separándolo como su
+propia entidad (Distrito Capital, no parte de Cundinamarca) al generar el archivo. Import estático
+normal, sin lazy-loading (~17KB). Es **solo una ayuda de UI** — el backend nunca lo conoce ni valida
+contra él (ver 4.2); si un lugar no aparece, `LocationSelector` deja escribirlo a mano.
+
+**`LocationSelector.tsx`** — componente controlado (mismo patrón que `GuestContactFields.tsx`, un
+objeto `LocationValue` único en vez de pares value/setValue) usado en `NeedHelpPage.tsx` y
+`ReportFormPage.tsx`. Tres modos (botones, ninguno preseleccionado al montar):
+- **Usar mi ubicación** — generaliza el único uso real de `navigator.geolocation` que existía antes
+  (`ReportFormPage.useMyLocation`). Coloca el pin automáticamente, pero **igual muestra los selects
+  de departamento/municipio** del catálogo debajo — no hay reverse-geocoding, GPS solo resuelve el
+  pin, nunca el texto administrativo.
+- **Buscar lugar** — selects progresivos departamento → municipio (municipio deshabilitado hasta
+  elegir departamento; las opciones de municipio siempre se filtran dentro del departamento ya
+  elegido, nunca por nombre global — hay municipios con el mismo nombre en departamentos distintos).
+  Al completar ambos, llama `api.getReports({departmentName, municipalityName, pageSize: 20})` para
+  centrar el mapa embebido con `fitBounds` sobre reportes ya existentes ahí; sin reportes previos,
+  cae a vista nacional.
+- **Escribir ubicación** — inputs de texto libre para departamento/municipio (mismo límite que el
+  backend, sin validar contra el catálogo — nunca bloquea) + `localityName` opcional.
+
+**El hueco que resuelve el mapa embebido de un solo pin:** el catálogo público no trae centroides
+por municipio (~1,104 de ellos), así que no hay forma de derivar `lat`/`lng` automáticamente en los
+modos "buscar lugar" o "escribir ubicación" sin GPS. Los 3 modos terminan en el mismo mapa
+interactivo (`useMapEvents({click})` + `CircleMarker`, nunca `Marker` — evita el bug clásico del
+ícono default de Leaflet roto por el bundling de Vite, mismo criterio que ya usaba `MapView.tsx`);
+el usuario siempre coloca o confirma un pin con un clic antes de poder publicar. `locationSource`
+(`gps`/`catalog`/`manual`) documenta cómo se llegó a ese pin, nunca si existe — todo reporte tiene
+coordenadas reales siempre.
+
+**`MapView.tsx`** ya no centra por ciudad (no hay coordenadas por municipio que usar) — el nuevo
+`FitToReports` llama `map.fitBounds()` sobre los marcadores de reportes realmente visibles, con
+fallback a una vista de Colombia completa (`[4.5, -74.3]`, zoom 5) cuando no hay ninguno. El prop
+`city` desapareció del componente por completo.
+
 ## 7. Flujos de punta a punta
 
 **Reportar sin cuenta:** usuario en `/reportar` o `/necesito-ayuda` sin sesión → llena el
@@ -461,6 +548,14 @@ una necesidad → botón "Ya está cubierto" o el formulario genérico → `POST
 detalle (sin recargar), en las tarjetas y en el marcador del mapa → el reporte sale de "Necesidades
 urgentes" en el home pero sigue visible (en verde) en el mapa y en "Todos los reportes" — así se
 ve "no traer más" sin tener que abrir el reporte.
+
+**Reportar desde un territorio fuera de las 6 zonas prioritarias:** usuario en `/reportar` sin que
+su municipio aparezca en ningún chip de acceso rápido → modo "Buscar lugar" de `LocationSelector` →
+elige cualquier departamento/municipio del catálogo (o "Escribir ubicación" si tampoco está en el
+catálogo) → coloca el pin en el mapa embebido → `POST /api/reports` con `departmentName`/
+`municipalityName` libres, sin ningún catálogo/enum del lado del backend que pueda rechazarlo → el
+reporte queda igual de visible que uno de Cali, solo que fuera del rango de los chips de acceso
+rápido del home (se encuentra filtrando por su departamento/municipio o navegando el mapa).
 
 ## 8. Desarrollo local
 
@@ -554,6 +649,25 @@ migraciones; el admin real se crea aparte con password generada.
   al creador del reporte — "reclamar un punto" (que un responsable se identifique y tenga permisos
   exclusivos sobre él) es una idea del documento maestro explícitamente posterior a Fase 1, no
   implementada.
+- **El catálogo territorial vive solo en el frontend, nunca en el backend.** `departmentName`/
+  `municipalityName` son texto libre validado por largo, no por pertenencia a ningún catálogo — es
+  la única forma de cumplir "nunca bloquear una publicación porque el lugar no esté en una lista
+  predeterminada" de manera literal. La contrapartida es que el backend no puede normalizar ni
+  agrupar por territorio de forma confiable (dos reportes de "Cali" y "cali " son técnicamente
+  valores distintos) — aceptable para esta fase, un problema de normalización de texto, no de
+  arquitectura, si hace falta resolverlo después.
+- **`city` se eliminó de la migración en el mismo paso que se agregó su reemplazo**, no se dejó como
+  columna muerta — el deploy de este proyecto es un solo servicio Render sin rolling/blue-green, así
+  que no hay ventana real donde código viejo y schema nuevo convivan bajo tráfico. Ninguna migración
+  previa del repo dejó columnas sin usar.
+- **`findNearbyReports` usa un bounding-box de lat/lng antes del Haversine**, no un índice espacial
+  real — aprovecha el `@@index([lat,lng])` que ya existía. Sin esto, quitar el filtro por ciudad
+  (necesario para arreglar el bug de duplicados) hubiera dejado un `take` fijo sin `orderBy`
+  corriendo sobre toda la tabla nacional, que podía devolver 0 resultados aunque sí hubiera
+  reportes cercanos reales.
+- **El mapa embebido de `LocationSelector` exige un pin en los 3 modos** (GPS/catálogo/manual), no
+  solo en GPS — es la única forma de garantizar `lat`/`lng` reales sin depender de un dataset de
+  centroides por municipio que no existe públicamente a ese nivel de detalle (~1,104 municipios).
 
 ## 11. Subagentes de Claude Code en este repo (`.claude/agents/`)
 

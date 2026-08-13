@@ -1,12 +1,12 @@
 # AquiAyudamosVE
 
-Ayuda donde más hace falta: plataforma para coordinar albergues, centros de acopio y necesidades tras el terremoto de agosto de 2026 en Cali, Colombia. Cualquiera puede reportar o pedir ayuda **sin crear cuenta**; la comunidad confirma o marca como incorrecta la información publicada, y un sistema de reputación/confianza prioriza lo más fiable y hace decaer lo que lleva mucho tiempo sin confirmar.
+Ayuda donde más hace falta: plataforma para coordinar albergues, centros de acopio y necesidades comunitarias en cualquier departamento, municipio, vereda o barrio de Colombia — nacida como respuesta al terremoto de agosto de 2026 en Cali. Cualquiera puede reportar o pedir ayuda **sin crear cuenta**; la comunidad confirma o marca como incorrecta la información publicada, y un sistema de reputación/confianza prioriza lo más fiable y hace decaer lo que lleva mucho tiempo sin confirmar.
 
 **En producción:** [aquiayudamosve.netlify.app](https://aquiayudamosve.netlify.app)
 
 ## Por qué existe
 
-Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuáles ya están saturados, y qué se necesita exactamente en cada uno, cambia cada pocos minutos y se dispersa en redes sociales, chats de WhatsApp y páginas improvisadas. AquiAyudamosVE le da a esa información una estructura que se puede filtrar por categoría y ciudad, ver en un mapa, y — lo más importante — mantener actualizada mediante confirmaciones de la propia comunidad en vez de depender de que alguien la edite a mano.
+Durante una emergencia, la información sobre qué puntos necesitan ayuda, cuáles ya están saturados, y qué se necesita exactamente en cada uno, cambia cada pocos minutos y se dispersa en redes sociales, chats de WhatsApp y páginas improvisadas. AquiAyudamosVE le da a esa información una estructura que se puede filtrar por categoría y territorio (departamento/municipio, o "cerca de mí" con GPS), ver en un mapa, y — lo más importante — mantener actualizada mediante confirmaciones de la propia comunidad en vez de depender de que alguien la edite a mano. No está limitada a una lista cerrada de ciudades: cualquier lugar de Colombia se puede elegir de un catálogo o escribir a mano si no aparece.
 
 La home no es una lista genérica de reportes: está organizada como un panel de situación —
 
@@ -26,7 +26,8 @@ La home no es una lista genérica de reportes: está organizada como un panel de
 ## Funcionalidad principal
 
 - Reportar y pedir ayuda **sin cuenta**: basta correo + celular; por debajo se crea un usuario "guest" (sin contraseña) que luego se puede reclamar registrándose con ese mismo correo ([backend/src/modules/reports/reports.service.ts](backend/src/modules/reports/reports.service.ts))
-- Reportes geolocalizados por categoría (ayuda, necesidad, crítico, info), visibles en el mapa con su categoría como etiqueta y filtrables por ciudad/categoría
+- Reportes geolocalizados por categoría (ayuda, necesidad, crítico, info), visibles en el mapa con su categoría como etiqueta y filtrables por departamento/municipio o categoría
+- Ubicación flexible en cualquier lugar de Colombia (departamento → municipio del catálogo, vereda/corregimiento/barrio a mano, GPS, o "cerca de mí"): nunca bloquea una publicación porque el lugar no esté en una lista predeterminada ([frontend/src/components/LocationSelector.tsx](frontend/src/components/LocationSelector.tsx))
 - Confirmación comunitaria de reportes (confirmar / dudoso / incorrecto) y sistema de reputación (nuevo → colaborador → colaborador confiable → voluntario verificado → organización → entidad institucional)
 - Decaimiento de confianza (`STALE_HOURS_THRESHOLD`): un reporte sin confirmar por varias horas pierde puntaje automáticamente, para que la info vieja no aparente ser tan confiable como la reciente
 - Actualizaciones sobre un reporte ya publicado (ej. "evacuación ordenada", "ya no se necesita más de esto") sin tener que crear uno nuevo

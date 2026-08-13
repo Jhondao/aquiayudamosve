@@ -36,7 +36,10 @@ export function serializeReport(report: ReportWithRelations) {
     id: report.id,
     title: report.title,
     description: report.description,
-    city: report.city,
+    departmentName: report.departmentName,
+    municipalityName: report.municipalityName,
+    localityName: report.localityName,
+    locationSource: report.locationSource,
     approxLocationText: report.approxLocationText,
     lat: report.lat,
     lng: report.lng,
@@ -127,8 +130,11 @@ export async function createReport(
     categoryKey: string;
     title: string;
     description: string;
-    city: string;
-    approxLocationText: string;
+    departmentName: string;
+    municipalityName: string;
+    localityName?: string;
+    locationSource: "gps" | "catalog" | "manual";
+    approxLocationText?: string;
     lat: number;
     lng: number;
     quantityNeeded?: number;
@@ -155,8 +161,11 @@ export async function createReport(
       categoryId: category.id,
       title: input.title,
       description: input.description,
-      city: input.city,
-      approxLocationText: isSensitive ? "Ubicación aproximada (precisión reducida)" : input.approxLocationText,
+      departmentName: input.departmentName,
+      municipalityName: input.municipalityName,
+      localityName: input.localityName ?? null,
+      locationSource: input.locationSource,
+      approxLocationText: isSensitive ? "Ubicación aproximada (precisión reducida)" : (input.approxLocationText ?? null),
       lat: coords.lat,
       lng: coords.lng,
       isSensitive,
@@ -188,11 +197,19 @@ export async function createReport(
   return serializeReport(report);
 }
 
-export async function listReports(filters: { city?: string; group?: string; institutional?: boolean; page: number; pageSize: number }) {
+export async function listReports(filters: {
+  departmentName?: string;
+  municipalityName?: string;
+  group?: string;
+  institutional?: boolean;
+  page: number;
+  pageSize: number;
+}) {
   const where: Prisma.ReportWhereInput = {
     deletedAt: null,
     status: { in: ["active", "inactive"] }, // hidden reports never surface publicly
-    ...(filters.city ? { city: filters.city } : {}),
+    ...(filters.departmentName ? { departmentName: filters.departmentName } : {}),
+    ...(filters.municipalityName ? { municipalityName: filters.municipalityName } : {}),
     ...(filters.group ? { category: { group: filters.group as never } } : {}),
     ...(filters.institutional ? { organizationId: { not: null } } : {}),
   };
@@ -215,16 +232,25 @@ export async function getReport(id: string) {
   return serializeReport(await loadReport(id));
 }
 
-export async function findNearbyReports(params: { lat: number; lng: number; city: string; radiusMeters: number; categoryKey?: string }) {
+export async function findNearbyReports(params: { lat: number; lng: number; radiusMeters: number; categoryKey?: string }) {
+  // Bounding-box antes del Haversine — sin esto, un `take` ciego a escala
+  // nacional puede devolver 0 resultados aunque sí existan reportes cercanos
+  // reales, si esas filas no caen dentro del slice pre-filtro. Aproximación
+  // simple sobre lat/lng (usa el índice @@index([lat,lng]) ya existente),
+  // no un índice espacial real — suficiente para esta fase.
+  const latDelta = params.radiusMeters / 111_320;
+  const lngDelta = params.radiusMeters / (111_320 * Math.cos((params.lat * Math.PI) / 180));
+
   const candidates = await prisma.report.findMany({
     where: {
       deletedAt: null,
       status: "active",
-      city: params.city,
+      lat: { gte: params.lat - latDelta, lte: params.lat + latDelta },
+      lng: { gte: params.lng - lngDelta, lte: params.lng + lngDelta },
       ...(params.categoryKey ? { category: { key: params.categoryKey } } : {}),
     },
     ...reportWithRelations,
-    take: 200,
+    take: 500,
   });
 
   return candidates

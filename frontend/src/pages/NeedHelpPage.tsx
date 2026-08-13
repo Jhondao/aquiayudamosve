@@ -3,17 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { GuestContactFields } from "../components/GuestContactFields";
+import { EMPTY_LOCATION, LocationSelector } from "../components/LocationSelector";
 import type { Category } from "../types";
 
-// Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí.
-const CITIES = ["Cali"];
-const CITY_CENTER: Record<string, [number, number]> = {
-  Cali: [3.4516, -76.532],
-  Pereira: [4.8087, -75.6906],
-  Manizales: [5.0703, -75.5138],
-  Armenia: [4.5339, -75.6811],
-  Quibdó: [5.6947, -76.6611],
-};
 const SENSITIVE_KEYS = new Set(["personas_heridas", "personas_vulnerables", "rescate_requerido"]);
 
 export default function NeedHelpPage() {
@@ -21,8 +13,8 @@ export default function NeedHelpPage() {
   const navigate = useNavigate();
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryKey, setCategoryKey] = useState("");
-  const [city, setCity] = useState("");
   const [description, setDescription] = useState("");
+  const [location, setLocation] = useState(EMPTY_LOCATION);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
@@ -39,8 +31,8 @@ export default function NeedHelpPage() {
 
   async function submit() {
     setError(null);
-    if (!categoryKey || !city) {
-      setError("Selecciona el tipo de necesidad y la ciudad.");
+    if (!categoryKey || !location.departmentName.trim() || !location.municipalityName.trim() || location.lat == null || location.lng == null) {
+      setError("Selecciona el tipo de necesidad y marca dónde, incluyendo el punto en el mapa.");
       return;
     }
     if (!profile && (!email.trim() || !phone.trim())) {
@@ -54,10 +46,13 @@ export default function NeedHelpPage() {
         categoryKey,
         title: label,
         description: description.trim() || label,
-        city,
-        approxLocationText: "Ubicación no especificada",
-        lat: CITY_CENTER[city][0],
-        lng: CITY_CENTER[city][1],
+        departmentName: location.departmentName.trim(),
+        municipalityName: location.municipalityName.trim(),
+        localityName: location.localityName.trim() || undefined,
+        locationSource: location.locationSource ?? "manual",
+        approxLocationText: location.approxLocationText.trim() || undefined,
+        lat: location.lat,
+        lng: location.lng,
         ...(quantityNeeded.trim() ? { quantityNeeded: Number(quantityNeeded), quantityUnit: quantityUnit.trim() || undefined } : {}),
         ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
       });
@@ -89,16 +84,6 @@ export default function NeedHelpPage() {
         {categories.map((c) => (
           <option key={c.key} value={c.key}>
             {c.label}
-          </option>
-        ))}
-      </select>
-
-      <label className="mt-4 block text-xs font-semibold text-slate-400">Ciudad</label>
-      <select value={city} onChange={(e) => setCity(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm">
-        <option value="">Selecciona…</option>
-        {CITIES.map((c) => (
-          <option key={c} value={c}>
-            {c}
           </option>
         ))}
       </select>
@@ -138,6 +123,10 @@ export default function NeedHelpPage() {
             className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
           />
         </div>
+      </div>
+
+      <div className="mt-4">
+        <LocationSelector value={location} onChange={setLocation} />
       </div>
 
       {!profile && <GuestContactFields email={email} setEmail={setEmail} phone={phone} setPhone={setPhone} />}

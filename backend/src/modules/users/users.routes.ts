@@ -9,7 +9,7 @@ router.get("/me/reports", requireAuth, async (req, res, next) => {
   try {
     const reports = await prisma.report.findMany({
       where: { createdById: req.user!.id, deletedAt: null },
-      select: { id: true, title: true, city: true, status: true, trustScore: true, createdAt: true },
+      select: { id: true, title: true, departmentName: true, municipalityName: true, status: true, trustScore: true, createdAt: true },
       orderBy: { createdAt: "desc" },
     });
     res.json({ profile: await getPublicProfile(req.user!.id), reports });

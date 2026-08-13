@@ -4,43 +4,37 @@ import type { Report } from "../types";
 import { GROUP_META } from "./categoryStyle";
 import { NEED_STATUS_META } from "./needStatusStyle";
 
-const CITY_CENTER: Record<string, [number, number]> = {
-  Cali: [3.4516, -76.532],
-  Pereira: [4.8087, -75.6906],
-  Manizales: [5.0703, -75.5138],
-  Armenia: [4.5339, -75.6811],
-  Quibdó: [5.6947, -76.6611],
-};
+const COLOMBIA_CENTER: [number, number] = [4.5, -74.3];
+const COLOMBIA_ZOOM = 5;
 
-function RecenterOnCity({ city }: { city?: string }) {
+// ACTUALIZACIÓN DEL PROMPT MAESTRO — ya no hay coordenadas por ciudad (el
+// catálogo territorial no trae centroides para ~1,124 municipios). Centra
+// sobre los marcadores realmente visibles en vez de un punto fijo por
+// ciudad; sin marcadores, cae a una vista de Colombia completa.
+function FitToReports({ reports }: { reports: Report[] }) {
   const map = useMap();
   useEffect(() => {
-    if (city && CITY_CENTER[city]) {
-      map.setView(CITY_CENTER[city], 13);
+    if (reports.length === 0) {
+      map.setView(COLOMBIA_CENTER, COLOMBIA_ZOOM);
+      return;
     }
-  }, [city, map]);
+    map.fitBounds(
+      reports.map((r) => [r.lat, r.lng] as [number, number]),
+      { padding: [30, 30], maxZoom: 15 }
+    );
+  }, [reports, map]);
   return null;
 }
 
-export function MapView({
-  reports,
-  city,
-  onSelect,
-}: {
-  reports: Report[];
-  city?: string;
-  onSelect: (id: string) => void;
-}) {
-  const center = (city ? CITY_CENTER[city] : undefined) ?? CITY_CENTER.Cali;
-
+export function MapView({ reports, onSelect }: { reports: Report[]; onSelect: (id: string) => void }) {
   return (
     <div className="h-[420px] w-full overflow-hidden rounded-2xl border border-border">
-      <MapContainer center={center} zoom={13} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
+      <MapContainer center={COLOMBIA_CENTER} zoom={COLOMBIA_ZOOM} scrollWheelZoom style={{ height: "100%", width: "100%" }}>
         <TileLayer
           attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
-        <RecenterOnCity city={city} />
+        <FitToReports reports={reports} />
         {reports.map((r) => {
           // Un punto ya cubierto/con excedente se marca en verde/azul en el
           // mapa mismo — es lo que evita que alguien lleve agua a un punto
@@ -72,7 +66,9 @@ export function MapView({
                     {r.category.label}
                   </span>
                   <div className="mt-1 font-semibold">{r.title}</div>
-                  <div className="text-xs text-slate-500">{r.approxLocationText}</div>
+                  <div className="text-xs text-slate-500">
+                    {r.approxLocationText ?? `${r.municipalityName}, ${r.departmentName}`}
+                  </div>
                   {r.needStatus && (
                     <div className="mt-1 text-xs font-bold" style={{ color: NEED_STATUS_META[r.needStatus].mapColor }}>
                       {NEED_STATUS_META[r.needStatus].emoji} {r.needStatusLabel}

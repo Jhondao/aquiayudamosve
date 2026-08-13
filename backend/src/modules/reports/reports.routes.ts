@@ -37,7 +37,7 @@ router.get("/", validateQuery(listQuerySchema), async (req, res, next) => {
 
 router.get("/nearby", validateQuery(nearbyQuerySchema), async (req, res, next) => {
   try {
-    const q = req.query as unknown as { lat: number; lng: number; city: string; radiusMeters: number; categoryKey?: string };
+    const q = req.query as unknown as { lat: number; lng: number; radiusMeters: number; categoryKey?: string };
     res.json({ reports: await findNearbyReports(q) });
   } catch (err) {
     next(err);

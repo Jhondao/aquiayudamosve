@@ -16,6 +16,8 @@ export type NeedStatus =
   | "excedente"
   | "desactualizado";
 
+export type LocationSource = "gps" | "catalog" | "manual";
+
 export interface Category {
   id: string;
   group: CategoryGroup;
@@ -42,8 +44,11 @@ export interface Report {
   id: string;
   title: string;
   description: string;
-  city: string;
-  approxLocationText: string;
+  departmentName: string;
+  municipalityName: string;
+  localityName: string | null;
+  locationSource: LocationSource;
+  approxLocationText: string | null;
   lat: number;
   lng: number;
   isSensitive: boolean;

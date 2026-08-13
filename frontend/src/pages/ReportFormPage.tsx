@@ -3,17 +3,9 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { GuestContactFields } from "../components/GuestContactFields";
+import { EMPTY_LOCATION, LocationSelector } from "../components/LocationSelector";
 import type { Category, Report } from "../types";
 
-// Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí.
-const CITIES = ["Cali"];
-const CITY_CENTER: Record<string, [number, number]> = {
-  Cali: [3.4516, -76.532],
-  Pereira: [4.8087, -75.6906],
-  Manizales: [5.0703, -75.5138],
-  Armenia: [4.5339, -75.6811],
-  Quibdó: [5.6947, -76.6611],
-};
 const SENSITIVE_KEYS = new Set(["personas_heridas", "personas_vulnerables", "rescate_requerido"]);
 
 export default function ReportFormPage() {
@@ -25,9 +17,7 @@ export default function ReportFormPage() {
   const [categoryKey, setCategoryKey] = useState("");
   const [title, setTitle] = useState("");
   const [description, setDescription] = useState("");
-  const [city, setCity] = useState("");
-  const [locationText, setLocationText] = useState("");
-  const [coords, setCoords] = useState<[number, number] | null>(null);
+  const [location, setLocation] = useState(EMPTY_LOCATION);
   const [nearby, setNearby] = useState<Report[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
@@ -44,29 +34,20 @@ export default function ReportFormPage() {
   const isSensitive = SENSITIVE_KEYS.has(categoryKey);
 
   useEffect(() => {
-    if (!city || !categoryKey) {
+    if (location.lat == null || location.lng == null || !categoryKey) {
       setNearby([]);
       return;
     }
-    const [lat, lng] = coords ?? CITY_CENTER[city];
     api
-      .getNearby({ lat, lng, city, categoryKey, radiusMeters: 300 })
+      .getNearby({ lat: location.lat, lng: location.lng, categoryKey, radiusMeters: 300 })
       .then((res) => setNearby(res.reports))
       .catch(() => setNearby([]));
-  }, [city, categoryKey, coords]);
-
-  function useMyLocation() {
-    if (!navigator.geolocation) return;
-    navigator.geolocation.getCurrentPosition(
-      (pos) => setCoords([pos.coords.latitude, pos.coords.longitude]),
-      () => setError("No se pudo obtener tu ubicación. Puedes seguir sin ella.")
-    );
-  }
+  }, [location.lat, location.lng, categoryKey]);
 
   async function submit() {
     setError(null);
-    if (!categoryKey || !title.trim() || !description.trim() || !city || !locationText.trim()) {
-      setError("Completa todos los campos obligatorios.");
+    if (!categoryKey || !title.trim() || !description.trim() || !location.departmentName.trim() || !location.municipalityName.trim() || location.lat == null || location.lng == null) {
+      setError("Completa todos los campos obligatorios, incluyendo el punto en el mapa.");
       return;
     }
     if (!profile && (!email.trim() || !phone.trim())) {
@@ -75,15 +56,17 @@ export default function ReportFormPage() {
     }
     setSubmitting(true);
     try {
-      const [lat, lng] = coords ?? CITY_CENTER[city];
       const report = await api.createReport({
         categoryKey,
         title,
         description,
-        city,
-        approxLocationText: locationText,
-        lat,
-        lng,
+        departmentName: location.departmentName.trim(),
+        municipalityName: location.municipalityName.trim(),
+        localityName: location.localityName.trim() || undefined,
+        locationSource: location.locationSource ?? "manual",
+        approxLocationText: location.approxLocationText.trim() || undefined,
+        lat: location.lat,
+        lng: location.lng,
         ...(group === "necesidad" && quantityNeeded.trim()
           ? { quantityNeeded: Number(quantityNeeded), quantityUnit: quantityUnit.trim() || undefined }
           : {}),
@@ -188,26 +171,9 @@ export default function ReportFormPage() {
         className="mt-1 min-h-[90px] w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm"
       />
 
-      <label className="mt-4 block text-xs font-semibold text-slate-400">Ciudad</label>
-      <select value={city} onChange={(e) => setCity(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm">
-        <option value="">Selecciona…</option>
-        {CITIES.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-
-      <label className="mt-4 block text-xs font-semibold text-slate-400">Ubicación aproximada (barrio, vía, referencia)</label>
-      <input
-        value={locationText}
-        onChange={(e) => setLocationText(e.target.value)}
-        placeholder="Ej: cerca al Parque de la Vida"
-        className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
-      />
-      <button onClick={useMyLocation} className="mt-2 text-xs font-semibold text-accent underline">
-        Usar mi ubicación actual (aproximada)
-      </button>
+      <div className="mt-4">
+        <LocationSelector value={location} onChange={setLocation} />
+      </div>
 
       {nearby.length > 0 && (
         <div className="mt-4 rounded-xl bg-surface p-3">

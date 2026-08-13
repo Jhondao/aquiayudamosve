@@ -85,19 +85,30 @@ export const api = {
 
   getCategories: () => request<{ categories: Category[] }>("/api/categories"),
 
-  getReports: (params: { city?: string; group?: string; institutional?: boolean } = {}) => {
+  getReports: (
+    params: {
+      departmentName?: string;
+      municipalityName?: string;
+      group?: string;
+      institutional?: boolean;
+      page?: number;
+      pageSize?: number;
+    } = {}
+  ) => {
     const qs = new URLSearchParams();
-    if (params.city) qs.set("city", params.city);
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
     if (params.group) qs.set("group", params.group);
     if (params.institutional) qs.set("institutional", "true");
+    if (params.page) qs.set("page", String(params.page));
+    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
     return request<{ reports: Report[]; total: number }>(`/api/reports?${qs.toString()}`);
   },
   getReport: (id: string) => request<Report>(`/api/reports/${id}`),
-  getNearby: (params: { lat: number; lng: number; city: string; radiusMeters?: number; categoryKey?: string }) => {
+  getNearby: (params: { lat: number; lng: number; radiusMeters?: number; categoryKey?: string }) => {
     const qs = new URLSearchParams({
       lat: String(params.lat),
       lng: String(params.lng),
-      city: params.city,
       ...(params.radiusMeters ? { radiusMeters: String(params.radiusMeters) } : {}),
       ...(params.categoryKey ? { categoryKey: params.categoryKey } : {}),
     });
@@ -107,8 +118,11 @@ export const api = {
     categoryKey: string;
     title: string;
     description: string;
-    city: string;
-    approxLocationText: string;
+    departmentName: string;
+    municipalityName: string;
+    localityName?: string;
+    locationSource: "gps" | "catalog" | "manual";
+    approxLocationText?: string;
     lat: number;
     lng: number;
     quantityNeeded?: number;
@@ -128,9 +142,10 @@ export const api = {
   myReports: () => request<{ profile: Profile; reports: Partial<Report>[] }>("/api/users/me/reports"),
 
   getFlaggedReports: () => request<{ reports: Report[] }>("/api/admin/reports/flagged"),
-  getAllReports: (params: { city?: string; status?: string } = {}) => {
+  getAllReports: (params: { departmentName?: string; municipalityName?: string; status?: string } = {}) => {
     const qs = new URLSearchParams();
-    if (params.city) qs.set("city", params.city);
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
     if (params.status) qs.set("status", params.status);
     return request<{ reports: Report[] }>(`/api/admin/reports?${qs.toString()}`);
   },

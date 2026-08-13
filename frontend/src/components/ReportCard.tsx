@@ -27,7 +27,7 @@ export function ReportCard({ report, onConfirm }: { report: Report; onConfirm?: 
         {report.title}
       </Link>
       <div className="text-xs text-slate-400">
-        {report.approxLocationText} · {report.city}
+        {report.approxLocationText ?? report.localityName ?? report.municipalityName} · {report.municipalityName}, {report.departmentName}
       </div>
 
       {report.needStatus && (

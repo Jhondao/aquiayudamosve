@@ -27,11 +27,12 @@ export async function listFlaggedReports() {
 // Unlike the public /api/reports listing, this is not limited to
 // active/inactive — moderators need to see hidden reports here too, and
 // nothing is paginated since admin review is expected to look at everything.
-export async function listAllReports(filters: { city?: string; status?: string }) {
+export async function listAllReports(filters: { departmentName?: string; municipalityName?: string; status?: string }) {
   const reports = await prisma.report.findMany({
     where: {
       deletedAt: null,
-      ...(filters.city ? { city: filters.city } : {}),
+      ...(filters.departmentName ? { departmentName: filters.departmentName } : {}),
+      ...(filters.municipalityName ? { municipalityName: filters.municipalityName } : {}),
       ...(filters.status ? { status: filters.status as never } : {}),
     },
     include: reportInclude,

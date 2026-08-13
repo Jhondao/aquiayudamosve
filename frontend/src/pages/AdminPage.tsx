@@ -96,7 +96,7 @@ export default function AdminPage() {
           <thead className="bg-surface2 text-left text-xs uppercase text-slate-400">
             <tr>
               <th className="px-3 py-2">Título</th>
-              <th className="px-3 py-2">Ciudad</th>
+              <th className="px-3 py-2">Municipio</th>
               <th className="px-3 py-2">Confianza</th>
               <th className="px-3 py-2">Denuncias</th>
               <th className="px-3 py-2">Estado</th>
@@ -115,7 +115,7 @@ export default function AdminPage() {
             {reports.map((r) => (
               <tr key={r.id} className="border-t border-border">
                 <td className="px-3 py-2">{r.title}</td>
-                <td className="px-3 py-2">{r.city}</td>
+                <td className="px-3 py-2">{r.municipalityName}, {r.departmentName}</td>
                 <td className="px-3 py-2">
                   <TrustBadge level={r.trustLevel} label={String(r.trustScore)} compact />
                 </td>
