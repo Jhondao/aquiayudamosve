@@ -5,10 +5,13 @@ import { useAuth } from "../context/AuthContext";
 import { GuestContactFields } from "../components/GuestContactFields";
 import { EMPTY_LOCATION, LocationSelector } from "../components/LocationSelector";
 import type { Category } from "../types";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 const SENSITIVE_KEYS = new Set(["personas_heridas", "personas_vulnerables", "rescate_requerido"]);
 
 export default function NeedHelpPage() {
+  useDocumentTitle("Necesito ayuda");
+
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [categories, setCategories] = useState<Category[]>([]);

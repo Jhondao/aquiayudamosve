@@ -46,7 +46,7 @@ export default defineConfig({
       manifest: {
         name: "AquiAyudamosVE",
         short_name: "Aquí Ayudamos",
-        description: "Información comunitaria verificable durante la emergencia en Cali.",
+        description: "Albergues, centros de acopio y necesidades de ayuda en tiempo real, actualizados por la comunidad en cualquier municipio de Colombia.",
         lang: "es",
         theme_color: "#111318",
         background_color: "#111318",

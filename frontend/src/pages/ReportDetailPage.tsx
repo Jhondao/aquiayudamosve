@@ -8,6 +8,7 @@ import { TrustBadge } from "../components/TrustBadge";
 import { ShareSheet } from "../components/ShareSheet";
 import { relativeTime } from "../utils/time";
 import type { CommitmentStatus, NeedStatus, Report } from "../types";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 const CONFIRMED_LEVELS = new Set(["confirmado", "institucional"]);
 
@@ -54,6 +55,14 @@ export default function ReportDetailPage() {
   const [commitTransport, setCommitTransport] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [shareBanner, setShareBanner] = useState<{ message: string; cta: string } | null>(null);
+
+  // Título dinámico solo para el <title> de la pestaña / historial del
+  // navegador y para Googlebot (que sí ejecuta JS antes de indexar). Los
+  // bots de vista previa de WhatsApp/Telegram/Facebook nunca ejecutan JS y
+  // por lo tanto nunca ven esto — para ellos existe la puerta
+  // server-rendered /r/:id (ver backend/src/modules/share/shareGateway.routes.ts),
+  // que sí sirve un og:title específico de este reporte.
+  useDocumentTitle(report?.title ?? "Detalle del reporte");
 
   async function load() {
     if (!id) return;
@@ -458,7 +467,11 @@ export default function ReportDetailPage() {
             {report.evidence.map((e) => (
               <div key={e.id} className="rounded-xl border border-border bg-surface p-3 text-xs">
                 {e.imageUrl && (
-                  <img src={e.imageUrl} alt="Evidencia adjunta" className="mb-2 max-h-64 w-full rounded-lg object-cover" />
+                  <img
+                    src={e.imageUrl}
+                    alt={`Foto de evidencia aportada por la comunidad para el reporte "${report.title}"`}
+                    className="mb-2 max-h-64 w-full rounded-lg object-cover"
+                  />
                 )}
                 {e.sourceUrl && (
                   <a href={e.sourceUrl} target="_blank" rel="noopener noreferrer nofollow" className="block text-accent underline">

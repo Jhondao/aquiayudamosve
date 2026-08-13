@@ -4,6 +4,7 @@ import { useAuth } from "../context/AuthContext";
 import { TrustBadge } from "../components/TrustBadge";
 import { relativeTime } from "../utils/time";
 import type { Report } from "../types";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 type AuditLog = {
   id: string;
@@ -17,6 +18,8 @@ type AuditLog = {
 type Action = "hide" | "unhide" | "markFalse" | "resolve" | "delete";
 
 export default function AdminPage() {
+  useDocumentTitle("Panel de administración");
+
   const { profile } = useAuth();
   const [flagged, setFlagged] = useState<Report[]>([]);
   const [allReports, setAllReports] = useState<Report[]>([]);

@@ -2,8 +2,11 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 export default function LoginPage() {
+  useDocumentTitle("Iniciar sesión");
+
   const { login } = useAuth();
   const navigate = useNavigate();
   const [email, setEmail] = useState("");

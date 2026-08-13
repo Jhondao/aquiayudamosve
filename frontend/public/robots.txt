@@ -1,0 +1,7 @@
+# AquiAyudamosVE es un sitio de información pública de emergencia — no hay
+# nada aquí que se beneficie de estar oculto para buscadores, así que no se
+# deshabilita ningún path.
+User-agent: *
+Allow: /
+
+Sitemap: https://aquiayudamosve.co/sitemap.xml

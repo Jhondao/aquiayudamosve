@@ -7,6 +7,7 @@ import { COLOMBIA_LOCATIONS } from "../data/colombiaLocations";
 import type { CategoryGroup, Report } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { PushToggle } from "../components/PushToggle";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 // ACTUALIZACIÓN DEL PROMPT MAESTRO — zonas prioritarias del terremoto del 10
 // de agosto (sección 2 del documento), accesos rápidos, no una lista cerrada
@@ -52,6 +53,8 @@ const HELP_ACTIONS = [
 ];
 
 export default function HomePage() {
+  useDocumentTitle("Ayuda comunitaria en Colombia");
+
   const [allReports, setAllReports] = useState<Report[]>([]);
   const [department, setDepartment] = useState("");
   const [municipality, setMunicipality] = useState("");
