@@ -59,6 +59,7 @@ export default function HomePage() {
   useDocumentTitle("Ayuda comunitaria en Colombia");
 
   const [allReports, setAllReports] = useState<Report[]>([]);
+  const [petsCount, setPetsCount] = useState<number | null>(null);
   const [department, setDepartment] = useState("");
   const [municipality, setMunicipality] = useState("");
   const [nearMe, setNearMe] = useState<{ lat: number; lng: number } | null>(null);
@@ -103,6 +104,13 @@ export default function HomePage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [department, municipality, nearMe]);
+
+  useEffect(() => {
+    api
+      .getPetReports({ pageSize: 1 })
+      .then((res) => setPetsCount(res.total))
+      .catch(() => setPetsCount(null));
+  }, []);
 
   const municipalityOptions = COLOMBIA_LOCATIONS.find((d) => d.name === department)?.municipalities ?? [];
 
@@ -278,6 +286,24 @@ export default function HomePage() {
           <div className="text-lg font-extrabold">🚚 {stats.transporte}</div>
           <div className="text-xs text-slate-400">Solicitudes de transporte</div>
         </div>
+      </div>
+
+      {/* Mascotas */}
+      <div className="mt-8">
+        <button
+          onClick={() => navigate("/mascotas")}
+          className="flex w-full items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4 text-left hover:bg-surface2"
+        >
+          <div>
+            <h2 className="text-sm font-bold">🐾 Mascotas perdidas y encontradas</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              {petsCount == null
+                ? "Ayúdanos a reunir mascotas con sus familias."
+                : `${petsCount} mascota${petsCount === 1 ? "" : "s"} reportada${petsCount === 1 ? "" : "s"} — ayúdanos a reunirlas con sus familias.`}
+            </p>
+          </div>
+          <span className="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white">Ver mascotas</span>
+        </button>
       </div>
 
       {/* Mapa */}
