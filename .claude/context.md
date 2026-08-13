@@ -26,6 +26,13 @@ la edite a mano.
 frontend solo tiene `"Cali"`, ver sección 4.3) — el modelo de datos soporta multi-ciudad
 (`Pereira`, `Manizales`, `Armenia`, `Quibdó` están en el enum/constantes pero deshabilitadas en la UI).
 
+**Evolución hacia coordinación (PROMPT MAESTRO):** el usuario pegó un documento que pide evolucionar
+la app de "mapa de reportes" a un sistema de coordinación de necesidades y capacidades, ordenado en
+6 fases explícitas por el documento mismo. **Fase 1 (estado ampliado de necesidades) ya está
+implementada** — ver sección 4.2. Fases 2–6 (módulo de recursos/servicios, compromisos "puedo
+cubrir X", matching, notificaciones segmentadas, analítica) son roadmap, no código — el documento
+mismo pide evolución incremental, sin reemplazar lo que ya funciona.
+
 ## 2. Stack
 
 | Capa | Tecnología |
@@ -132,7 +139,8 @@ Cada intento de login/registro/logout se registra best-effort en `SecurityEvent`
 
 Modelo `Report`: categoría, título, descripción, ciudad, ubicación aproximada (texto + lat/lng),
 `status` (`active`/`inactive`/`hidden`), `trustScore`, `createdById`, `organizationId?`,
-`isSensitive`, `lastConfirmedAt`. Relaciones: `confirmations`, `evidence`, `updates`, `flags`.
+`isSensitive`, `lastConfirmedAt`, más `needStatus`/`quantityNeeded`/`quantityUnit`/`quantityReceived`
+(Fase 1, ver más abajo). Relaciones: `confirmations`, `evidence`, `updates`, `flags`.
 
 **Publicar sin cuenta (el cambio más importante del proyecto, agregado en el PR
 "open-community-reporting"):** `POST /api/reports` **no requiere sesión.** Si `req.user` no está
@@ -175,6 +183,31 @@ Lectura (públicos, sin auth):
 - `GET /nearby` — reportes dentro de un radio (Haversine) de una categoría/ciudad — se usa en el
   formulario de reportar para avisar "ya existe un reporte similar cerca" antes de duplicar.
 - `GET /:id` — detalle completo.
+
+**Estado de necesidades (Fase 1 del PROMPT MAESTRO):** reportes de grupo `necesidad` (solo esos —
+el resto queda con estos campos en `NULL`) tienen un `needStatus`: `necesitamos` → `en_camino` →
+`parcialmente_cubierto` → `cubierto`/`excedente`/`desactualizado`, más `quantityNeeded`/
+`quantityUnit`/`quantityReceived`. `quantityPending` (= `quantityNeeded - quantityReceived`, nunca
+negativo) se calcula al serializar, no se persiste — mismo patrón que `applyDecay` en 4.3.
+`createReport` decide `needStatus: "necesitamos"` explícitamente cuando la categoría es de ese
+grupo (nunca vía `@default` de columna — eso lo filtraría a *todo* `Report.create()`, no solo a
+necesidades). `quantityReceived` es un **total corriente**, no un ledger de contribuciones
+individuales — cada actualización fija el nuevo total, no lo suma.
+
+`POST /:id/need-status` (`requireAuth`, mismo nivel comunitario que confirm/flag/update, **no**
+restringido al creador) actualiza `needStatus` y/o `quantityReceived` vía `updateNeedStatus()` en
+`reports.service.ts`: valida que el reporte sea de grupo `necesidad` (400 si no), exige al menos un
+campo en el body (400 si no — el schema Zod no puede usar `.refine()` porque
+`validateBody(schema: AnyZodObject)` no acepta `ZodEffects`, así que el guard vive en el service),
+genera un texto autogenerado ("Estado actualizado a...", "Recibidos N de M...") y lo agrega como
+`ReportUpdate` — **reusa el timeline existente**, no hay tabla de historial nueva — y **también
+actualiza `lastConfirmedAt`**: si no lo hiciera, un punto que la comunidad sí mantiene activamente
+decaería igual que uno abandonado (ver 4.3), reintroduciendo por otra puerta el problema que esta
+fase busca resolver.
+
+En el frontend, un reporte `cubierto`/`excedente` se marca en verde en el mapa y las tarjetas
+(`needStatusStyle.ts`), y sale del ranking "Necesidades urgentes" del home sin desaparecer del
+listado — ver 6.4/6.7.
 
 ### 4.3 Sistema de confianza y reputación (`modules/trust/`)
 
@@ -238,7 +271,9 @@ borra sola en vez de reintentar para siempre.
 
 MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, aplicadas en orden:
 `init` → `guest_reports` (passwordHash nullable + phone + isGuest) →
-`push_subscriptions` → `widen_push_endpoint` (VarChar 500).
+`push_subscriptions` → `widen_push_endpoint` (VarChar 500) →
+`need_status` (needStatus + quantityNeeded/Unit/Received en `Report`, con backfill de
+`needStatus = 'necesitamos'` para los reportes de grupo `necesidad` ya existentes).
 
 | Modelo | Para qué |
 |---|---|
@@ -261,6 +296,8 @@ MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, apl
 `ReputationLevel` (enum): `nuevo` → `colaborador` → `colaborador_confiable` →
 `voluntario_verificado` → `organizacion` → `entidad_institucional`.
 `CategoryGroup` (enum): `ayuda` / `necesidad` / `critico` / `info`.
+`NeedStatus` (enum, Fase 1): `necesitamos` / `en_camino` / `parcialmente_cubierto` / `cubierto` /
+`excedente` / `desactualizado` — solo se usa en `Report` cuando `category.group === "necesidad"`.
 
 ## 6. Frontend — arquitectura
 
@@ -281,6 +318,7 @@ frontend/src/
     TrustBadge.tsx            — pill de nivel de confianza
     PushToggle.tsx            — activar/desactivar notificaciones push
     categoryStyle.ts           — GROUP_META: color/label/badge por CategoryGroup (única fuente de verdad de estilo por categoría)
+    needStatusStyle.ts          — NEED_STATUS_META: emoji/badge/color de marcador por NeedStatus (Fase 1) — el texto sigue viniendo del backend (needStatusLabel)
   utils/time.ts              — relativeTime() ("hace 5 min")
   styles/index.css            — Tailwind + estilos globales (incluye .map-tag para las etiquetas del mapa)
 ```
@@ -334,7 +372,9 @@ No es una lista simple. Estructura de arriba a abajo (todo en un solo componente
    necesidades, transporte), calculadas client-side con `useMemo` sobre `allReports`.
 5. **Mapa** (`MapView`, filtrado por lo que esté seleccionado más abajo).
 6. **Necesidades urgentes** — ranking por volumen real de reportes por categoría (no una lista
-   fija a mano), con severidad `CRÍTICA`/`ALTA` según el conteo.
+   fija a mano), con severidad `CRÍTICA`/`ALTA` según el conteo. Excluye reportes con
+   `needStatus` `cubierto`/`excedente` (Fase 1) — un punto ya resuelto no debe seguir pareciendo
+   urgente, aunque sigue visible (en verde) en el mapa y en "Todos los reportes".
 7. **¿Cómo puedes ayudar?** — accesos directos (donaciones/transporte/voluntariado) que filtran la
    lista de abajo por categoría y hacen scroll a ella.
 8. **Todos los reportes** — selector de ciudad, los dos CTA grandes (Pedir ayuda / Reportar un
@@ -376,6 +416,19 @@ Perfil/Salir o Ingresar, Panel admin si aplica) vive en un panel colapsable. El 
 (verde del isotipo) está en `tailwind.config.js` como `brand: "#4beb9b"`, separado de `accent`
 (azul, `#3b6fe0` — el color de acción/UI, no de marca).
 
+### 6.7 Estado de necesidades en el frontend (Fase 1)
+
+`NeedHelpPage.tsx` y `ReportFormPage.tsx` (esta última solo cuando `group === "necesidad"`) tienen
+dos inputs opcionales de cantidad+unidad junto al resto del formulario, mandados a
+`api.createReport()` solo si se llenó cantidad. `ReportDetailPage.tsx` tiene una sección "Estado de
+la necesidad" (visible solo si `report.category.group === "necesidad"`) con un botón directo
+"✅ Ya está cubierto — no traer más" y un formulario genérico (select de los 6 estados + cantidad
+recibida) que llaman `api.updateNeedStatus()`; ambos pasan por el mismo `guardedAction` que ya usan
+confirmar/denunciar (redirige a `/login` si no hay sesión). `ReportCard.tsx` y el `Popup` de
+`MapView.tsx` muestran el mismo badge de estado; `MapView.tsx` además cambia el **color del
+marcador** a verde/azul cuando `needStatus` es `cubierto`/`excedente` — eso es lo que evita que
+alguien lleve ayuda a un punto ya resuelto sin tener que abrir el popup para enterarse.
+
 ## 7. Flujos de punta a punta
 
 **Reportar sin cuenta:** usuario en `/reportar` o `/necesito-ayuda` sin sesión → llena el
@@ -401,6 +454,13 @@ por decay al vuelo.
 **Moderación:** un moderador ve `/admin` → `markFalse` sobre un reporte → oculta el reporte, pone
 su score en 0, resuelve sus flags, y penaliza -15 la reputación de quien lo creó — todo en una sola
 transacción de Prisma más una llamada aparte a `penalizeForFalseInformation`.
+
+**Un punto se marca como cubierto (Fase 1):** alguien confirmado en la comunidad abre el detalle de
+una necesidad → botón "Ya está cubierto" o el formulario genérico → `POST /:id/need-status` →
+`needStatus` pasa a `cubierto` y `lastConfirmedAt` se refresca → el badge se pone verde en el
+detalle (sin recargar), en las tarjetas y en el marcador del mapa → el reporte sale de "Necesidades
+urgentes" en el home pero sigue visible (en verde) en el mapa y en "Todos los reportes" — así se
+ve "no traer más" sin tener que abrir el reporte.
 
 ## 8. Desarrollo local
 
@@ -482,3 +542,28 @@ migraciones; el admin real se crea aparte con password generada.
   todavía (`critico` y `necesidad` disparan a *todos* los suscritos) — no hay segmentación por
   ciudad o tipo de interés por ahora, aunque el modelo de datos (`PushSubscription` sin `userId`)
   ya está preparado para agregarla después si se decide asociar suscripciones a categorías.
+- **`needStatus`/`quantityNeeded`/etc. viven en `Report` directamente** (Fase 1), no en una tabla
+  1:1 aparte — mismo argumento que ya vale para `trustScore`: es un dato 1:1 real, todo listado ya
+  carga el `Report` completo, y quedan `NULL` para las 3 categorías que no son `necesidad` (igual
+  que `isSensitive`).
+- **`quantityReceived` es un total corriente, no un ledger de contribuciones.** Modelar "quién trajo
+  cuánto" por persona es justo lo que Fase 3 (`NeedCommitment`, ver README/plan de Fase 1) agrega
+  después — adelantarlo en Fase 1 hubiera significado una tabla nueva para un caso de uso que
+  todavía no existe en el producto.
+- **Confirmar/denunciar/actualizar/estado de necesidad son todos comunitarios**, nunca restringidos
+  al creador del reporte — "reclamar un punto" (que un responsable se identifique y tenga permisos
+  exclusivos sobre él) es una idea del documento maestro explícitamente posterior a Fase 1, no
+  implementada.
+
+## 11. Subagentes de Claude Code en este repo (`.claude/agents/`)
+
+Se cargan solos al abrir el proyecto en Claude Code, listados también en el README:
+
+- `backend-validator` — typecheck, tests, drift de Prisma/migraciones, build, cobertura de env vars.
+- `frontend-validator` — typecheck, build, wiring de la API, rutas, CSP del mapa.
+- `deploy-readiness` — secretos filtrados, CORS, config de storage, manejo de cookies cross-origin.
+- `seo-specialist` — meta tags, Open Graph/Twitter cards, robots.txt, sitemap.xml. A diferencia de
+  los tres anteriores (solo reportan), este puede aplicar los cambios directamente. Calibrado a que
+  esta app es una SPA sin SSR (los bots de previsualización de WhatsApp/Telegram no ven contenido
+  por ruta, solo el `<head>` estático) y a que el contenido de los reportes es comunitario y
+  efímero (nunca debe llevar structured data que implique veracidad verificada).
