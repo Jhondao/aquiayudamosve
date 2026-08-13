@@ -13,6 +13,11 @@ export default defineConfig({
       // cachean agresivamente porque no cambian.
       workbox: {
         navigateFallback: "/index.html",
+        // /r/:id es una navegación real (WhatsApp abre el link directo en el
+        // navegador), no una ruta de la SPA — si un usuario con la PWA ya
+        // instalada la abre, no debe recibir el index.html cacheado en vez
+        // del HTML con las meta tags OG + el meta-refresh real.
+        navigateFallbackDenylist: [/^\/r\//],
         // Agrega los listeners de push/notificationclick al mismo service
         // worker sin salirnos del modo generateSW (más simple que armar uno
         // a mano con injectManifest).
@@ -62,6 +67,15 @@ export default defineConfig({
     // gymnastics on localhost.
     proxy: {
       "/api": {
+        target: "http://localhost:4000",
+        changeOrigin: true,
+      },
+      // Puerta social de compartir por WhatsApp (backend, fuera de /api —
+      // sirve HTML con OG tags). Mismo motivo que el proxy de /api arriba.
+      // Con barra final a propósito: Vite matchea por prefijo de string
+      // crudo, así que "/r" sin barra también capturaría "/reporte" y
+      // "/registro" — "/r/" nunca hace match con esas rutas de la SPA.
+      "/r/": {
         target: "http://localhost:4000",
         changeOrigin: true,
       },

@@ -28,6 +28,8 @@ import {
   updateSchema,
 } from "./reports.schemas";
 import { persistEvidenceImage, uploadEvidenceImage } from "./uploads";
+import { getOrCreateShareCard, recordShareEvent } from "../share/shareCard.service";
+import { shareEventSchema } from "../share/share.schemas";
 
 const router = Router();
 
@@ -113,6 +115,30 @@ router.post("/:id/commitments", requireAuth, confirmationLimiter, validateBody(c
 router.patch("/:id/commitments/:commitmentId", requireAuth, confirmationLimiter, validateBody(updateCommitmentSchema), async (req, res, next) => {
   try {
     res.json(await updateCommitment(req.params.id, req.params.commitmentId, req.user!.id, req.body));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// PROMPT MAESTRO — COMPARTIR REPORTES CONFIRMADOS POR WHATSAPP. Pública, sin
+// auth (compartir un reporte no requiere sesión) — solo genera pieza visual
+// para reportes confirmados/institucionales/cubiertos/con excedente, ver
+// shareCard.service.ts#determineShareStatus.
+router.get("/:id/share-card", async (req, res, next) => {
+  try {
+    res.json(await getOrCreateShareCard(req.params.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Fire-and-forget: nunca bloquea la UI de compartir si falla (mismo criterio
+// que broadcastPush). Pública — compartir no requiere sesión, pero registra
+// el usuario si hay uno.
+router.post("/:id/share-event", confirmationLimiter, validateBody(shareEventSchema), async (req, res, next) => {
+  try {
+    await recordShareEvent(req.params.id, req.user?.id, req.body.channel);
+    res.status(202).json({ ok: true });
   } catch (err) {
     next(err);
   }

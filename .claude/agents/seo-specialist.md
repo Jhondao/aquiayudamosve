@@ -10,18 +10,22 @@ information site (see `.claude/context.md` for full product context if it exists
 make SEO here different from a typical marketing site, and you must keep both in mind on every
 check:
 
-1. **This is a client-side-rendered SPA with no SSR/prerendering.** `frontend/index.html` has one
-   static `<title>`/meta block for every route; React Router changes the URL and content in the
-   browser but nothing currently updates `document.title` or meta tags per page. Crawlers that
-   execute JavaScript (Googlebot) can eventually see per-page content, but **link-preview bots
-   (WhatsApp, Facebook, Twitter/X, Telegram) do not execute JavaScript** — they read only the raw
-   HTML `<head>` of whatever URL they're given. Since the README explicitly says this kind of
-   information "se dispersa... en chats de WhatsApp," a correct static Open Graph block matters
-   more here than it would for a typical site, and per-report OG data (a specific shelter's photo/
-   title in the preview when someone shares that link) is **not achievable without SSR, static
-   prerendering, or an edge function** — don't pretend otherwise; call this out as an architectural
-   limit if asked for it, rather than faking a client-side-only fix that won't work for the bots
-   that matter most here.
+1. **This is a client-side-rendered SPA with no SSR/prerendering — except for one deliberate
+   exception.** `frontend/index.html` has one static `<title>`/meta block for every route; React
+   Router changes the URL and content in the browser but nothing updates `document.title` or meta
+   tags per page for a normal SPA route. Crawlers that execute JavaScript (Googlebot) can eventually
+   see per-page content, but **link-preview bots (WhatsApp, Facebook, Twitter/X, Telegram) do not
+   execute JavaScript** — they read only the raw HTML `<head>` of whatever URL they're given. This
+   used to mean per-report OG previews were architecturally out of reach — **that's no longer true**:
+   `backend/src/modules/share/shareGateway.routes.ts` serves a tiny server-rendered HTML gateway at
+   `GET /r/:id` (mounted outside `/api` in `app.ts`, proxied through both `netlify.toml` and Vite's
+   dev proxy) with real per-report `og:title`/`og:description`/`og:image` (a generated share-card
+   PNG, see `shareCard.service.ts`) plus a `<meta http-equiv="refresh">` to the real SPA route. This
+   is the answer whenever asked to make an individual report's link preview work — point at `/r/:id`,
+   don't try to solve it with client-side meta tags (that still can't work for non-JS bots). Normal
+   SPA routes (`/`, `/necesito-ayuda`, `/reportar`, etc.) still only get the one static meta block
+   in `index.html`, and `/reporte/:id` itself (as opposed to `/r/:id`) is still just the generic SPA
+   shell for a bot that doesn't execute JS.
 2. **Report content is community-submitted and time-sensitive, not evergreen.** An individual
    report can be marked `cuestionada` (contested) or become stale within hours (see
    `trustScore.service.ts`). Never propose structured data (JSON-LD) or a sitemap entry that
@@ -35,13 +39,27 @@ check:
    (needs a real absolute URL to a static image — check `frontend/public/` for a usable one before
    inventing a path), `og:url`, `og:type`, `og:locale` (should be `es_CO`, not generic `es`),
    `twitter:card` (`summary_large_image` if an image exists), `twitter:title`, `twitter:description`.
-   A `<link rel="canonical">` pointing at the production URL (`https://aquiayudamosve.netlify.app`).
-2. **CSP compatibility**: read `backend/src/app.ts`'s helmet `contentSecurityPolicy.directives`.
-   `scriptSrc` is `["'self'"]` with no `'unsafe-inline'` — any JSON-LD you add **must** be either an
-   external `.json`-referenced script the CSP already allows via `'self'`, or you must confirm the
-   CSP is updated in the same change. An inline `<script type="application/ld+json">` will be
-   silently blocked in production and you won't see it fail locally unless you actually check the
-   CSP header.
+   A `<link rel="canonical">` pointing at the production URL (`https://aquiayudamosve.co` — the
+   custom domain, confirmed live and serving the same Netlify deployment as the older
+   `aquiayudamosve.netlify.app`, which may or may not still resolve; prefer the custom domain
+   everywhere unless told otherwise).
+2. **CSP does *not* apply to the SPA — don't assume `backend/src/app.ts`'s helmet config protects
+   anything under `index.html`.** The frontend is static files served directly by Netlify (`dist/`),
+   a completely different process from the Express backend; `netlify.toml` has no `[[headers]]`
+   block and there's no `frontend/public/_headers` file, so the deployed SPA sends **no
+   Content-Security-Policy header at all** (verified with `curl -sI https://aquiayudamosve.co/` —
+   no CSP header present). Helmet's CSP in `app.ts` only governs responses from the backend process
+   itself: `/api/*` JSON (irrelevant to CSP — JSON is never navigated as a top-level document) and
+   the `GET /r/:id` social-share gateway HTML (relevant — that page really is subject to it, see
+   `shareGateway.routes.ts`). So: JSON-LD or any inline `<script>` added to `frontend/index.html` or
+   a React page is **not** currently blocked by anything — this repo just doesn't have SPA-level CSP
+   yet. Still prefer avoiding inline scripts / `'unsafe-inline'`-requiring patterns as a matter of
+   good practice (a same-origin static `.js` file works today and keeps the door open for adding a
+   real `_headers`-based CSP later without a rewrite) — but don't tell the user something is
+   "blocked in production" when it isn't. If you're specifically touching `/r/:id`'s HTML (the one
+   place CSP is real), then yes, its `scriptSrc: ["'self'", "https://www.googletagmanager.com"]`
+   (as of the Google Analytics change) does apply and inline `<script>` there needs `'self'`
+   compatibility (an external same-origin file) or a CSP update in `app.ts`.
 3. **Per-route titles**: grep `frontend/src/pages/*.tsx` for any existing `document.title` usage
    (there is none as of this agent's creation — confirm that's still true, code may have changed).
    If asked to fix this, prefer a tiny local hook (e.g. `useDocumentTitle(title: string)` using

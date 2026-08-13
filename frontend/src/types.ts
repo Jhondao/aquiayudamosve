@@ -88,6 +88,16 @@ export interface Report {
   needCommitments: Commitment[];
 }
 
+export type ShareStatus = "confirmed" | "institutional" | "covered" | "surplus" | "questioned" | "unconfirmed";
+export type ShareChannel = "whatsapp" | "web_share" | "copy_link" | "save_image";
+
+export interface ShareCard {
+  imageUrl: string | null;
+  shareUrl: string;
+  whatsappText: string;
+  status: ShareStatus;
+}
+
 export interface Profile {
   id: string;
   displayName: string;

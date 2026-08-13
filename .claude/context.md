@@ -21,7 +21,8 @@ sociales y chats. Esta app le da a esa información una estructura filtrable, vi
 se mantiene actualizada por confirmaciones de la propia comunidad en vez de depender de que alguien
 la edite a mano.
 
-**Producción:** frontend en `https://aquiayudamosve.netlify.app`, backend en
+**Producción:** frontend en `https://aquiayudamosve.co` (dominio propio, confirmado en vivo —
+apunta al mismo despliegue de Netlify que `https://aquiayudamosve.netlify.app`), backend en
 `https://aquiayudamosve.onrender.com`. Ver sección 9 (Despliegue).
 
 **Estado del alcance:** cobertura nacional (**"ACTUALIZACIÓN DEL PROMPT MAESTRO"** implementada) —
@@ -39,6 +40,10 @@ Fase A de v3 (`NeedCommitment` — compromisos parciales de ayuda con tracking d
 (Fase B de v3), un motor de matching necesidad↔recurso (Fase D), y coordinación avanzada — alertas
 de cercanía, puntos saturados, reclamar un punto (Fase E) — el documento mismo pide evolución
 incremental, una fase a la vez, sin reemplazar lo que ya funciona.
+
+**Compartir por WhatsApp (documento "PROMPT MAESTRO — COMPARTIR REPORTES CONFIRMADOS POR
+WHATSAPP"):** ya implementado — ver sección 4.6/6.10. Genera una pieza visual descargable/compartible
+solo para reportes que la comunidad ya confirmó, no para cualquier reporte (nunca "100% verificado").
 
 ## 2. Stack
 
@@ -66,12 +71,12 @@ controllers/services genéricos compartidos entre módulos — cada `*.routes.ts
 
 ```
 backend/src/
-  app.ts                 — createApp(): registra middleware global y monta cada router en /api/*
+  app.ts                 — createApp(): registra middleware global, monta cada router en /api/*, y /r fuera de /api
   index.ts               — arranca el server (app.listen)
   config/env.ts           — lee y valida process.env una sola vez, todo el resto del código importa `env` de aquí
   lib/
     prisma.ts             — instancia única de PrismaClient
-    objectStorage.ts       — cliente S3 (Supabase Storage) para subir fotos de evidencia
+    objectStorage.ts       — cliente S3 (Supabase Storage) para subir fotos de evidencia y piezas de compartir
     push.ts               — envío de Web Push (broadcastPush) usando web-push + VAPID
   middleware/
     auth.ts                — authenticate (lee JWT, no bloquea) + requireAuth + requireRole
@@ -80,12 +85,13 @@ backend/src/
     validate.ts             — validateBody/validateQuery con Zod
   modules/
     auth/           — registro, login, refresh, logout, /me — ver sección 4.1
-    reports/         — crear/listar/confirmar/marcar/actualizar reportes, subir evidencia — el módulo más grande, ver sección 4.2
+    reports/         — crear/listar/confirmar/marcar/actualizar reportes, subir evidencia, compromisos de ayuda — el módulo más grande, ver sección 4.2
     categories/       — GET /api/categories (catálogo de categorías, público, solo lectura)
     moderation/        — panel de admin: listar todo, moderar, audit log — ver sección 4.4
     organizations/      — CRUD mínimo de organizaciones (solo admin puede crear/verificar)
     users/            — GET /api/users/me/reports (reportes propios del usuario logueado)
     push/             — VAPID public key, subscribe/unsubscribe — ver sección 4.5
+    share/            — pieza visual + puerta social /r/:id para compartir por WhatsApp — ver sección 4.6
     trust/           — trustScore.service.ts (algoritmo de confianza) + reputation.service.ts (reputación de usuario) — sin rutas propias, solo lógica que usan reports/moderation
     security/          — securityEvents.ts: audit trail best-effort de eventos de auth (login, logout, fallos)
   utils/
@@ -93,10 +99,24 @@ backend/src/
     tokens.ts           — firma/verificación de JWT, hash de refresh tokens
 ```
 
-`app.ts` monta, en orden: `helmet` (con CSP que permite tiles de OSM) → `cors` (credentials: true,
-origen = `CORS_ORIGIN`) → `express.json` (límite 1mb) → `cookieParser` → `authenticate` (global,
-no bloquea) → `generalLimiter` (120 req/min) → `GET /api/health` → los routers de cada módulo →
-`notFoundHandler` → `errorHandler`.
+`backend/assets/fonts/` (fuera de `src/`, junto a `prisma/`): `Inter-Regular.ttf` / `Inter-Bold.ttf`
+(licencia OFL) — las fuentes que `satori` vectoriza para la pieza de compartir, ver 4.6.
+
+`app.ts` monta, en orden: `helmet` (con CSP que permite tiles de OSM, el bucket de Supabase Storage
+y Google Analytics — ver nota abajo) → `cors` (credentials: true, origen = `CORS_ORIGIN`) →
+`express.json` (límite 1mb) → `cookieParser` → `authenticate` (global, no bloquea) →
+`generalLimiter` (120 req/min) → `GET /api/health` → los routers de cada módulo → `/r` (fuera de
+`/api`, ver 4.6) → `notFoundHandler` → `errorHandler`.
+
+**La CSP de `helmet` solo protege lo que sirve *este* proceso Express** (respuestas JSON de `/api`
+— irrelevante para CSP, un JSON nunca se navega como documento top-level — y el HTML de `/r/:id`,
+donde sí importa). **No protege la SPA de React en absoluto**: el frontend lo sirve Netlify
+directamente desde `dist/`, un proceso completamente distinto, y no hay `_headers` ni
+`[[headers]]` en `netlify.toml` que le agregue CSP — confirmado en producción (`curl -sI
+https://aquiayudamosve.co/` no trae header `Content-Security-Policy`). Si algún día se quiere una
+CSP real para la SPA, tiene que configurarse del lado de Netlify (`frontend/public/_headers` o
+`netlify.toml`), no editando `helmet()` aquí — eso solo cambiaría la CSP de `/r/:id` y de las
+respuestas de `/api`.
 
 ### 3.1 Variables de entorno (`backend/src/config/env.ts`)
 
@@ -337,6 +357,78 @@ caracteres default de Prisma, eso rompía el insert con 500 antes del ajuste), `
 categoría todavía). Si una suscripción devuelve 404/410 (usuario desinstaló, limpió datos), se
 borra sola en vez de reintentar para siempre.
 
+### 4.6 Compartir por WhatsApp (`modules/share/`)
+
+Genera una pieza visual (PNG 1080x1350) + texto pre-armado para compartir un reporte por WhatsApp,
+pero **solo para reportes que la comunidad ya confirmó** — el nombre del documento fuente es
+literal ("compartir reportes CONFIRMADOS"), no "compartir cualquier reporte".
+
+**`determineShareStatus(report)`** (`shareCard.service.ts`) clasifica en 6 estados: `confirmed` /
+`institutional` / `covered` / `surplus` / `questioned` / `unconfirmed`. Solo los primeros 4 generan
+imagen (`IMAGE_ELIGIBLE`); `questioned` (trustLevel `cuestionada`) y `unconfirmed` (todo lo demás,
+incluye `status: inactive` forzado) devuelven `imageUrl: null` — solo enlace + texto de advertencia.
+Un reporte `status: hidden` (oculto por moderación) se trata como **inexistente** para esta función
+a propósito (`loadShareableReport` lanza 404) — a diferencia del resto de la app, donde `GET
+/api/reports/:id` sí expone hoy un reporte oculto (hueco preexistente, no introducido aquí, ver
+sección 10).
+
+**Generación de imagen — por qué `satori` y no SVG+`sharp` directo:** `satori` (JS puro, sin
+binario nativo) vectoriza el texto usando las fuentes exactas que le pasamos
+(`backend/assets/fonts/Inter-{Regular,Bold}.ttf`, licencia OFL, extraídas del release oficial de
+`rsms/inter` — el repo `google/fonts` solo trae la variable font, sin instancias estáticas), así el
+resultado nunca depende de qué fuentes tenga el contenedor de Render. **Cero emoji/símbolos Unicode
+en el render** (ni siquiera los glyphs ✓/◆/○ que ya usa `TrustBadge.tsx` en la UI web) — el riesgo
+real es que Inter no tenga ese glyph y satori lo rendericé como tofu; los badges de estado son
+píldoras de color + texto plano en español. `sharp` (ya dependencia) solo rasteriza el SVG final —
+ya sin ningún `<text>` propio, satori ya lo vectorizó — a PNG. El QR se genera con `qrcode` en modo
+`toBuffer({type: "png"})`, que usa `pngjs` (JS puro) en Node, no `canvas`/binario nativo.
+
+**Nota de layout de satori/yoga:** `width: "fit-content"` no es un valor válido para el layout
+engine (yoga) — para que un chip/badge se ajuste a su contenido en vez de estirarse al 100% del
+padre (default de flexbox en un contenedor `column`), se usa `alignSelf: "flex-start"`. Verificado
+renderizando y mirando el PNG resultado (la única forma real de confirmar que el layout se ve bien).
+
+**Caché** (`cardCache`, `Map` en memoria por proceso — Render corre una sola instancia): keyed por
+`reportId`, invalidada cuando cambia `lastConfirmedAt+needStatus+trustLevel+updatedAt` — nunca por
+tiempo fijo. Solo cachea cuando hay imagen (`IMAGE_ELIGIBLE`); los estados sin imagen se recalculan
+siempre (son baratos, no llaman a `satori`/`sharp`/Supabase).
+
+**Puerta social `GET /r/:id`** (`shareGateway.routes.ts`, montada en `app.ts` como `app.use("/r",
+...)`, **fuera de `/api`** — responde HTML, no JSON): HTML mínimo con `og:title`/`og:description`/
+`og:image`/`og:url` + `<meta http-equiv="refresh" content="0;url=/reporte/:id">` + un `<a>` visible
+de respaldo. **Sin `<script>` inline a propósito** — choca con la CSP `scriptSrc: ["'self'"]` que ya
+existe en `app.ts` (misma que aplica a esta ruta, es el mismo `app` de Express), y el meta-refresh a
+0 ya es instantáneo en cualquier navegador real. Bots de WhatsApp/Telegram/Facebook no ejecutan JS
+ni siguen meta-refresh, solo leen las meta tags estáticas. `getPublicPreview()` envuelve
+`getOrCreateShareCard()` en un try/catch que nunca deja caer un 500 — cualquier fallo (reporte no
+encontrado, oculto, o el propio render/subida) cae a una página genérica "contenido no disponible"
+con 200, nunca expone un stack trace ni rompe el link compartido.
+
+**URL corta = el UUID del reporte, no un código nuevo**: el UUID ya es público en `/reporte/:id` y
+en toda respuesta de la API — un código corto ganaría estética, no privacidad, y hubiera sido
+justo la "infraestructura nueva" que el documento pide evitar. `/r/:id` ya es más corto que
+`/reporte/:id`.
+
+**`ShareEvent`**: telemetría mínima best-effort (`reportId, userId?, channel, createdAt` — nunca
+destinatarios ni números), `recordShareEvent()` nunca lanza (mismo criterio que `broadcastPush`).
+No se agrega al include de `reportWithRelations` — se escribe, nunca se sirve junto al reporte.
+
+**Endpoints** (`reports.routes.ts`, ambos públicos): `GET /:id/share-card` → `{imageUrl, shareUrl,
+whatsappText, status}`. `POST /:id/share-event` → `202`, fire-and-forget.
+
+**Proxy en desarrollo/producción**: igual que `/api`, `/r` necesita su propio proxy — Netlify
+(`netlify.toml`, redirect `/r/*` antes del catch-all de la SPA) y Vite dev (`vite.config.ts`,
+`server.proxy["/r/"]`). **Con barra final a propósito** (`"/r/"`, no `"/r"`): Vite matchea el proxy
+por prefijo de string crudo sobre la URL, así que la clave `"/r"` sin barra también capturaba
+`/reporte/*` y `/registro` (ambas empiezan con "r") — un bug real que se encontró y corrigió durante
+la verificación E2E, no algo hipotético. Netlify no tiene este problema (matchea por segmento de
+ruta, no por prefijo de string), pero se dejó `/r/*` en ambos por claridad.
+
+**Límite conocido, no resoluble desde este lado**: WhatsApp cachea agresivamente el preview ya
+mostrado en un chat y no ofrece forma pública de invalidarlo — por eso todo texto de compartir
+incluye "Consulta el estado actualizado", el link en sí siempre lleva al estado real aunque el
+preview visual quede desactualizado en un chat viejo.
+
 ## 5. Base de datos — modelo completo (`backend/prisma/schema.prisma`)
 
 MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, aplicadas en orden:
@@ -349,7 +441,8 @@ MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, apl
 valores de `city` que existían a su departamento real, y `DROP COLUMN city` en el mismo paso — ver
 "Cobertura territorial nacional" en 4.2 y la decisión correspondiente en la sección 10) →
 `need_commitments` (tabla nueva `NeedCommitment`, sin backfill — no reemplaza ni toca ninguna
-columna existente de `Report`, ver "Compromisos de ayuda" en 4.2).
+columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
+`share_events` (tabla nueva `ShareEvent`, sin backfill, ver "Compartir por WhatsApp" en 4.6).
 
 | Modelo | Para qué |
 |---|---|
@@ -364,6 +457,7 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2).
 | `ReportUpdate` | Actualización de texto sobre un reporte existente |
 | `ReportFlag` | Denuncia con motivo, `resolved` boolean |
 | `NeedCommitment` | Promesa de ayuda de un usuario sobre un reporte de necesidad — ver 4.2 |
+| `ShareEvent` | Telemetría best-effort de qué canal se usó para compartir — ver 4.6 |
 | `ModerationAction` | Acción de moderador sobre un reporte |
 | `AuditLog` | Trail genérico de cualquier acción administrativa |
 | `Session` | Refresh tokens activos (hash, no el token) |
@@ -378,6 +472,8 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2).
 `excedente` / `desactualizado` — solo se usa en `Report` cuando `category.group === "necesidad"`.
 `CommitmentStatus` (enum, Fase A de "PROMPT MAESTRO v3"): `committed` / `on_the_way` / `delivered` /
 `cancelled` — estado de un `NeedCommitment`, ver 4.2.
+`ShareChannel` (enum): `whatsapp` / `web_share` / `copy_link` / `save_image` — canal de un
+`ShareEvent`, ver 4.6.
 
 ## 6. Frontend — arquitectura
 
@@ -398,6 +494,7 @@ frontend/src/
     ReportCard.tsx            — tarjeta de reporte en listados
     TrustBadge.tsx            — pill de nivel de confianza
     PushToggle.tsx            — activar/desactivar notificaciones push
+    ShareSheet.tsx             — bottom sheet de compartir (WhatsApp/otra app/copiar/guardar), ver 6.10
     categoryStyle.ts           — GROUP_META: color/label/badge por CategoryGroup (única fuente de verdad de estilo por categoría)
     needStatusStyle.ts          — NEED_STATUS_META: emoji/badge/color de marcador por NeedStatus (Fase 1) — el texto sigue viniendo del backend (needStatusLabel)
   data/colombiaLocations.ts   — catálogo departamento→municipios de Colombia, ver 6.8
@@ -574,6 +671,38 @@ solo muestra botones "Marcar en camino"/"Marcar entregado"/"Cancelar" en las tar
 prometió ayuda, así que la UI no tiene forma de mostrar esos controles sobre el compromiso de otro
 aunque quisiera.
 
+### 6.10 Compartir por WhatsApp en el frontend
+
+**`ShareSheet.tsx`** — bottom sheet controlado por `open`/`onClose`. Al abrirse llama
+`api.getShareCard(reportId)`; si `imageUrl` es `null` muestra una advertencia ("⚠️ Esta información
+aún no está confirmada...") en vez de la imagen, y el botón "Guardar pieza" queda deshabilitado —
+nunca hay nada que descargar si no se generó pieza. Botones y su fallback:
+- **WhatsApp** — abre `https://wa.me/?text=<whatsappText>` en una pestaña nueva.
+- **Otra app** — intenta `navigator.share({files: [...]})` con el PNG descargado vía `fetch()` si
+  `navigator.canShare({files})` lo soporta; si no, cae a `navigator.share({text, url})`; si tampoco
+  hay soporte (o el usuario cancela, o falla el `fetch` por CORS del bucket), cae al mismo flujo de
+  WhatsApp. Todo el fallback vive en un único `try/catch`.
+- **Copiar enlace** — `navigator.clipboard.writeText(shareUrl)` + aviso "Enlace copiado."
+- **Guardar pieza** — `<a download>` sintético al `imageUrl`.
+
+Cada acción llama `api.recordShareEvent(reportId, channel)` sin esperar la respuesta ni bloquear la
+UI (mismo criterio *fire-and-forget* que el backend usa para `broadcastPush`).
+
+**Botón "COMPARTIR"** en `ReportDetailPage.tsx` — en la misma fila que confirmar/denunciar, pero
+**sin pasar por `guardedAction`**: compartir un reporte público no requiere sesión, a diferencia de
+confirmar/denunciar/actualizar.
+
+**Banners de CTA tras una transición de estado** — ambos capturan el estado *antes* del `await` para
+detectar si la acción fue la que causó la transición (y no mostrar el banner si el reporte ya estaba
+en ese estado):
+- `confirmReportAndOfferShare()`: si `trustLevel` pasa a `confirmado`/`institucional` por primera
+  vez, banner "Este reporte ya está confirmado por la comunidad." → "Compartir con mi comunidad".
+- `markCoveredAndOfferShare()`: si `needStatus` pasa a `cubierto` por primera vez, banner "¡Gracias
+  por actualizar!" → "Compartir actualización por WhatsApp".
+
+Ambos banners abren el mismo `<ShareSheet>` montado al final del componente — no hace falta pasarle
+una variante, el backend recalcula `status` sobre el reporte ya actualizado.
+
 ## 7. Flujos de punta a punta
 
 **Reportar sin cuenta:** usuario en `/reportar` o `/necesito-ayuda` sin sesión → llena el
@@ -730,6 +859,25 @@ migraciones; el admin real se crea aparte con password generada.
 - **El mapa embebido de `LocationSelector` exige un pin en los 3 modos** (GPS/catálogo/manual), no
   solo en GPS — es la única forma de garantizar `lat`/`lng` reales sin depender de un dataset de
   centroides por municipio que no existe públicamente a ese nivel de detalle (~1,104 municipios).
+- **Solo reportes `confirmed`/`institutional`/`covered`/`surplus` generan una pieza de compartir** —
+  el nombre del documento fuente ("compartir reportes CONFIRMADOS") es literal. Un reporte recién
+  publicado (`unconfirmed`) o disputado (`questioned`) solo comparte enlace + advertencia en texto,
+  nunca una imagen pulida que invite a reenviarla sin cuestionarla.
+- **`satori` en vez de SVG+`sharp` directo para la pieza de compartir.** Renderizar `<text>` crudo y
+  rasterizarlo con `sharp`/librsvg en un contenedor headless es frágil (depende de qué fuentes tenga
+  instaladas el sistema, y de soporte de emoji a color que Render no garantiza). `satori` vectoriza
+  el texto usando las 2 fuentes TTF que le pasamos explícitamente — el resultado no depende del
+  entorno. Por el mismo motivo, la pieza nunca usa glyphs Unicode (ni emoji ni símbolos como ✓/◆) —
+  solo texto plano en español sobre píldoras de color.
+- **`GET /:id/share-card` trata un reporte `status: "hidden"` como inexistente (404)**, a propósito
+  distinto del resto de la app — `GET /api/reports/:id` general sí expone hoy un reporte oculto por
+  moderación (hueco preexistente, no introducido por esta feature). Para la pieza de compartir sí se
+  bloqueó explícitamente: no tiene sentido generar una imagen descargable de algo que un moderador
+  ya retiró de circulación.
+- **La URL corta de compartir es el UUID del reporte (`/r/:id`), no un código nuevo.** El UUID ya es
+  público en `/reporte/:id` y en toda respuesta de la API — un código corto ganaría estética, no
+  privacidad, y hubiera sido la "infraestructura nueva" que el documento fuente pide evitar por una
+  ganancia cosmética.
 
 ## 11. Subagentes de Claude Code en este repo (`.claude/agents/`)
 

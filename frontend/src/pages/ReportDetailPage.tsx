@@ -5,8 +5,11 @@ import { useAuth } from "../context/AuthContext";
 import { GROUP_META } from "../components/categoryStyle";
 import { NEED_STATUS_META } from "../components/needStatusStyle";
 import { TrustBadge } from "../components/TrustBadge";
+import { ShareSheet } from "../components/ShareSheet";
 import { relativeTime } from "../utils/time";
 import type { CommitmentStatus, NeedStatus, Report } from "../types";
+
+const CONFIRMED_LEVELS = new Set(["confirmado", "institucional"]);
 
 const COMMITMENT_STATUS_META: Record<CommitmentStatus, { label: string; emoji: string; badgeClass: string }> = {
   committed: { label: "Prometido", emoji: "🤝", badgeClass: "bg-accent/20 text-accent" },
@@ -49,6 +52,8 @@ export default function ReportDetailPage() {
   const [commitOnTheWay, setCommitOnTheWay] = useState(false);
   const [commitEta, setCommitEta] = useState("");
   const [commitTransport, setCommitTransport] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareBanner, setShareBanner] = useState<{ message: string; cta: string } | null>(null);
 
   async function load() {
     if (!id) return;
@@ -96,6 +101,31 @@ export default function ReportDetailPage() {
       setSourceUrl("");
       setNotice("Evidencia agregada.");
       await load();
+    });
+  }
+
+  async function confirmReportAndOfferShare() {
+    const wasConfirmed = report != null && CONFIRMED_LEVELS.has(report.trustLevel);
+    await guardedAction(async () => {
+      const updated = await api.confirmReport(report!.id, "confirm");
+      setReport(updated);
+      if (!wasConfirmed && CONFIRMED_LEVELS.has(updated.trustLevel)) {
+        setShareBanner({
+          message: "Este reporte ya está confirmado por la comunidad.",
+          cta: "Compartir con mi comunidad",
+        });
+      }
+    });
+  }
+
+  async function markCoveredAndOfferShare() {
+    const wasCovered = report?.needStatus === "cubierto";
+    await guardedAction(async () => {
+      const updated = await api.updateNeedStatus(report!.id, { needStatus: "cubierto" });
+      setReport(updated);
+      if (!wasCovered && updated.needStatus === "cubierto") {
+        setShareBanner({ message: "¡Gracias por actualizar!", cta: "Compartir actualización por WhatsApp" });
+      }
     });
   }
 
@@ -183,7 +213,7 @@ export default function ReportDetailPage() {
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
-          onClick={() => guardedAction(async () => setReport(await api.confirmReport(report.id, "confirm")))}
+          onClick={confirmReportAndOfferShare}
           className="rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white"
         >
           ✓ CONFIRMAR
@@ -200,7 +230,28 @@ export default function ReportDetailPage() {
         >
           REPORTAR INCORRECTO
         </button>
+        <button
+          onClick={() => setShareOpen(true)}
+          className="rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-semibold"
+        >
+          COMPARTIR
+        </button>
       </div>
+
+      {shareBanner && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-safe bg-safe/10 px-3 py-2.5 text-sm">
+          <span>{shareBanner.message}</span>
+          <button
+            onClick={() => {
+              setShareOpen(true);
+              setShareBanner(null);
+            }}
+            className="rounded-lg bg-safe px-3 py-1.5 text-xs font-bold text-white"
+          >
+            {shareBanner.cta}
+          </button>
+        </div>
+      )}
 
       {report.category.group === "necesidad" && (
         <div className="mt-4 rounded-2xl border border-border bg-surface p-4">
@@ -216,9 +267,7 @@ export default function ReportDetailPage() {
           )}
 
           <button
-            onClick={() =>
-              guardedAction(async () => setReport(await api.updateNeedStatus(report.id, { needStatus: "cubierto" })))
-            }
+            onClick={markCoveredAndOfferShare}
             className="mt-3 block w-full rounded-xl bg-safe px-4 py-2.5 text-sm font-bold text-white"
           >
             ✅ Ya está cubierto — no traer más
@@ -455,6 +504,8 @@ export default function ReportDetailPage() {
           </div>
         ))}
       </div>
+
+      <ShareSheet reportId={report.id} open={shareOpen} onClose={() => setShareOpen(false)} />
     </div>
   );
 }

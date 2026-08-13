@@ -73,6 +73,16 @@ enum CommitmentStatus {
   cancelled
 }
 
+// PROMPT MAESTRO — COMPARTIR REPORTES CONFIRMADOS POR WHATSAPP. Telemetría
+// mínima de qué canal se usó para compartir, nunca destinatarios ni números
+// (sección "ShareEvent" del documento).
+enum ShareChannel {
+  whatsapp
+  web_share
+  copy_link
+  save_image
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
@@ -96,6 +106,7 @@ model User {
   updates           ReportUpdate[]
   flagsRaised       ReportFlag[]       @relation("FlagRaisedBy")
   needCommitments   NeedCommitment[]
+  shareEvents       ShareEvent[]
   moderationActions ModerationAction[] @relation("ModerationActor")
   auditLogs         AuditLog[]         @relation("AuditActor")
   sessions          Session[]
@@ -204,6 +215,7 @@ model Report {
   updates       ReportUpdate[]
   flags         ReportFlag[]
   needCommitments NeedCommitment[]
+  shareEvents   ShareEvent[]
 
   @@index([departmentName, municipalityName])
   @@index([categoryId])
@@ -290,6 +302,22 @@ model NeedCommitment {
 
   @@index([reportId])
   @@index([userId])
+}
+
+// Telemetría best-effort de compartir (nunca bloquea la UI si falla, mismo
+// criterio que broadcastPush) — no se agrega al include de reportWithRelations,
+// nunca se sirve junto al reporte, solo se escribe.
+model ShareEvent {
+  id        String       @id @default(uuid())
+  reportId  String
+  userId    String?
+  channel   ShareChannel
+  createdAt DateTime     @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
+
+  @@index([reportId])
 }
 
 model ModerationAction {

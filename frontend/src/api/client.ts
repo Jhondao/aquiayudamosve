@@ -1,4 +1,4 @@
-import type { Category, CommitmentStatus, NeedStatus, Profile, Report } from "../types";
+import type { Category, CommitmentStatus, NeedStatus, Profile, Report, ShareCard, ShareChannel } from "../types";
 
 // Kept in memory only — never localStorage/sessionStorage, so an XSS payload
 // reading storage can't lift a long-lived credential. Refresh token lives in
@@ -154,6 +154,11 @@ export const api = {
     commitmentId: string,
     data: { status?: CommitmentStatus; estimatedArrival?: string; note?: string }
   ) => request<Report>(`/api/reports/${id}/commitments/${commitmentId}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  // Públicos, sin auth — compartir un reporte no requiere sesión.
+  getShareCard: (id: string) => request<ShareCard>(`/api/reports/${id}/share-card`),
+  recordShareEvent: (id: string, channel: ShareChannel) =>
+    request<{ ok: true }>(`/api/reports/${id}/share-event`, { method: "POST", body: JSON.stringify({ channel }) }),
 
   myReports: () => request<{ profile: Profile; reports: Partial<Report>[] }>("/api/users/me/reports"),
 
