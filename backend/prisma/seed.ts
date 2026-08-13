@@ -44,12 +44,16 @@ const CATEGORIES: { group: "ayuda" | "necesidad" | "critico" | "info"; key: stri
   { group: "info", key: "via_habilitada", label: "Vía habilitada", sortOrder: 6 },
 ];
 
-const CITY_CENTER: Record<string, [number, number]> = {
-  Cali: [3.4516, -76.532],
-  Pereira: [4.8087, -75.6906],
-  Manizales: [5.0703, -75.5138],
-  Armenia: [4.5339, -75.6811],
-  Quibdó: [5.6947, -76.6611],
+// ACTUALIZACIÓN DEL PROMPT MAESTRO — reemplaza el CITY_CENTER de "solo Cali"
+// por municipio+departamento+coordenadas de las ciudades prioritarias
+// (sección 2 del documento: Cali, Pereira, Manizales, Armenia, Quibdó, Popayán).
+const CITY_INFO: Record<string, { department: string; lat: number; lng: number }> = {
+  Cali: { department: "Valle del Cauca", lat: 3.4516, lng: -76.532 },
+  Pereira: { department: "Risaralda", lat: 4.8087, lng: -75.6906 },
+  Manizales: { department: "Caldas", lat: 5.0703, lng: -75.5138 },
+  Armenia: { department: "Quindío", lat: 4.5339, lng: -75.6811 },
+  Quibdó: { department: "Chocó", lat: 5.6947, lng: -76.6611 },
+  Popayán: { department: "Cauca", lat: 2.4448, lng: -76.6147 },
 };
 
 function jitter([lat, lng]: [number, number], seed: number): [number, number] {
@@ -105,7 +109,7 @@ async function main() {
     categoryKey: string;
     title: string;
     description: string;
-    city: keyof typeof CITY_CENTER;
+    city: keyof typeof CITY_INFO;
     place: string;
     creator: string;
     org?: boolean;
@@ -129,7 +133,8 @@ async function main() {
 
   for (const s of reportSeeds) {
     const category = await cat(s.categoryKey);
-    const [lat, lng] = jitter(CITY_CENTER[s.city], s.seedIndex);
+    const info = CITY_INFO[s.city];
+    const [lat, lng] = jitter([info.lat, info.lng], s.seedIndex);
     const createdAt = new Date(Date.now() - s.hoursAgo * 3_600_000 - 3_600_000);
     const lastConfirmedAt = new Date(Date.now() - s.hoursAgo * 3_600_000);
 
@@ -138,7 +143,9 @@ async function main() {
         categoryId: category.id,
         title: s.title,
         description: s.description,
-        city: s.city,
+        departmentName: info.department,
+        municipalityName: s.city,
+        locationSource: "catalog",
         approxLocationText: s.place,
         lat,
         lng,
@@ -175,10 +182,12 @@ async function main() {
       categoryId: (await cat("edificio_afectado")).id,
       title: "Rumor: puente colapsado (sin confirmar)",
       description: "Publicación sin evidencia sobre un supuesto colapso del puente sobre el río Cali.",
-      city: "Cali",
+      departmentName: CITY_INFO.Cali.department,
+      municipalityName: "Cali",
+      locationSource: "catalog",
       approxLocationText: "Río Cali",
-      lat: CITY_CENTER.Cali[0] + 0.01,
-      lng: CITY_CENTER.Cali[1] - 0.01,
+      lat: CITY_INFO.Cali.lat + 0.01,
+      lng: CITY_INFO.Cali.lng - 0.01,
       createdById: newUser1.id,
       createdAt: new Date(Date.now() - 3_600_000),
       lastConfirmedAt: new Date(Date.now() - 3_600_000),

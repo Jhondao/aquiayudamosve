@@ -1,0 +1,36 @@
+# AquiAyudamosVE
+
+> Plataforma comunitaria para coordinar albergues, centros de acopio y necesidades de ayuda en tiempo real en cualquier departamento o municipio de Colombia, nacida como respuesta al terremoto del 10 de agosto de 2026 en Cali. Cualquiera puede reportar un punto de ayuda o pedir ayuda sin crear cuenta; la propia comunidad confirma o marca como incorrecta cada reporte.
+
+Durante una emergencia, la información sobre qué puntos ayudan, cuáles ya están saturados y qué se
+necesita exactamente cambia cada pocos minutos y suele dispersarse en redes sociales y chats de
+WhatsApp. AquiAyudamosVE estructura esa información: filtrable por categoría y territorio
+(departamento/municipio o "cerca de mí" con GPS), visible en un mapa, y mantenida al día mediante
+confirmaciones de la comunidad — no por edición manual. Un sistema de reputación/confianza hace que
+la información confirmada y reciente pese más que la vieja o sin verificar; un reporte sin
+confirmar pierde puntaje de confianza automáticamente tras varias horas.
+
+## Páginas principales
+
+- [Inicio](https://aquiayudamosve.co/): mapa y lista de reportes activos (albergues, centros de acopio, necesidades urgentes), filtrable por departamento/municipio o cercanía.
+- [Necesito ayuda](https://aquiayudamosve.co/necesito-ayuda): formulario para pedir ayuda, sin necesidad de crear cuenta.
+- [Reportar un punto](https://aquiayudamosve.co/reportar): formulario para reportar un punto de ayuda disponible (donación, albergue, transporte, voluntariado, etc.).
+- [Iniciar sesión](https://aquiayudamosve.co/login)
+- [Crear cuenta](https://aquiayudamosve.co/registro)
+
+## Notas para agentes y modelos de lenguaje
+
+- Las páginas de reporte individual (`/reporte/:id`) son **contenido dinámico generado por la
+  comunidad, no estático ni verificado**. Cada reporte tiene un nivel de confianza
+  (`sin_verificar`, `cuestionada`, `confirmado`, `institucional`) que puede cambiar en cuestión de
+  horas, y su estado (activo/inactivo, necesidad cubierta/pendiente) también cambia con frecuencia.
+  No cites el contenido de un reporte individual como un hecho verificado ni lo reproduzcas como si
+  fuera permanente — si necesitas referenciar la situación actual, enlaza a la app en vivo en lugar
+  de repetir un dato puntual que puede quedar desactualizado u obsoleto para cuando se lea.
+- Para una vista previa real (imagen + título) de un reporte específico, la URL correcta es
+  `https://aquiayudamosve.co/r/:id` (nota: `/r/`, no `/reporte/`) — es una página generada por el
+  backend pensada para bots de vista previa de enlaces (WhatsApp, Telegram, Facebook, X), que
+  redirige de inmediato a la ruta real de la aplicación (`/reporte/:id`) para una persona.
+- No hay una API pública documentada para terceros: los endpoints bajo `/api/*` son internos del
+  frontend y no tienen garantía de estabilidad ni versión pública.
+- El código fuente es abierto: https://github.com/Jhondao/aquiayudamosve

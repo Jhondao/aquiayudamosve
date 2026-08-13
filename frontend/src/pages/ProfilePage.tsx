@@ -2,6 +2,7 @@ import { useEffect, useState } from "react";
 import { Link } from "react-router-dom";
 import { api } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 const REPUTATION_LABEL: Record<string, string> = {
   nuevo: "Nuevo",
@@ -13,8 +14,12 @@ const REPUTATION_LABEL: Record<string, string> = {
 };
 
 export default function ProfilePage() {
+  useDocumentTitle("Mi perfil");
+
   const { profile } = useAuth();
-  const [reports, setReports] = useState<{ id: string; title: string; city: string; status: string; trustScore: number }[]>([]);
+  const [reports, setReports] = useState<
+    { id: string; title: string; departmentName: string; municipalityName: string; status: string; trustScore: number }[]
+  >([]);
 
   useEffect(() => {
     if (profile) api.myReports().then((res) => setReports(res.reports as never));
@@ -39,7 +44,7 @@ export default function ProfilePage() {
           <Link key={r.id} to={`/reporte/${r.id}`} className="rounded-xl border border-border bg-surface p-3 text-sm hover:border-accent">
             <div className="font-semibold">{r.title}</div>
             <div className="text-xs text-slate-400">
-              {r.city} · confianza {r.trustScore} · {r.status}
+              {r.municipalityName}, {r.departmentName} · confianza {r.trustScore} · {r.status}
             </div>
           </Link>
         ))}

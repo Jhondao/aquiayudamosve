@@ -14,6 +14,7 @@ import moderationRoutes from "./modules/moderation/moderation.routes";
 import organizationsRoutes from "./modules/organizations/organizations.routes";
 import usersRoutes from "./modules/users/users.routes";
 import pushRoutes from "./modules/push/push.routes";
+import shareGatewayRoutes from "./modules/share/shareGateway.routes";
 
 export function createApp() {
   const app = express();
@@ -27,10 +28,19 @@ export function createApp() {
       contentSecurityPolicy: {
         directives: {
           defaultSrc: ["'self'"],
-          imgSrc: ["'self'", "data:", "https://*.tile.openstreetmap.org"],
+          // *.supabase.co: fotos de evidencia y piezas de compartir, ambas
+          // servidas desde el bucket público de Supabase Storage
+          // (STORAGE_PUBLIC_URL) — sin esto el navegador bloquea esos <img>
+          // en producción aunque la URL sea válida y pública.
+          imgSrc: ["'self'", "data:", "https://*.tile.openstreetmap.org", "https://*.supabase.co"],
           styleSrc: ["'self'", "'unsafe-inline'"],
-          scriptSrc: ["'self'"],
-          connectSrc: ["'self'"],
+          // googletagmanager.com: carga gtag.js (Google Analytics). El script
+          // de inicialización va en /gtag-init.js (mismo origen, ver
+          // frontend/public/) en vez de inline — así no hace falta
+          // 'unsafe-inline' para nada de script.
+          scriptSrc: ["'self'", "https://www.googletagmanager.com"],
+          // google-analytics.com: envío de hits de gtag.js (fetch/beacon).
+          connectSrc: ["'self'", "https://www.google-analytics.com", "https://*.google-analytics.com", "https://www.googletagmanager.com"],
           objectSrc: ["'none'"],
           frameAncestors: ["'none'"],
         },
@@ -59,6 +69,10 @@ export function createApp() {
   app.use("/api/organizations", organizationsRoutes);
   app.use("/api/users", usersRoutes);
   app.use("/api/push", pushRoutes);
+
+  // Fuera de /api a propósito: responde HTML (puerta social con OG tags),
+  // no JSON. Ver shareGateway.routes.ts.
+  app.use("/r", shareGatewayRoutes);
 
   app.use(notFoundHandler);
   app.use(errorHandler);

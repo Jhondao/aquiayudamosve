@@ -3,12 +3,25 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { MapView } from "../components/MapView";
 import { ReportCard } from "../components/ReportCard";
+import { COLOMBIA_LOCATIONS } from "../data/colombiaLocations";
 import type { CategoryGroup, Report } from "../types";
 import { useAuth } from "../context/AuthContext";
 import { PushToggle } from "../components/PushToggle";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
-// Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí.
-const CITIES = ["Cali"];
+// ACTUALIZACIÓN DEL PROMPT MAESTRO — zonas prioritarias del terremoto del 10
+// de agosto (sección 2 del documento), accesos rápidos, no una lista cerrada
+// de cobertura: cualquier otro departamento/municipio se puede elegir con
+// los selects de abajo o queda igual visible sin filtro.
+const PRIORITY_ZONES = [
+  { municipality: "Cali", department: "Valle del Cauca" },
+  { municipality: "Pereira", department: "Risaralda" },
+  { municipality: "Manizales", department: "Caldas" },
+  { municipality: "Armenia", department: "Quindío" },
+  { municipality: "Quibdó", department: "Chocó" },
+  { municipality: "Popayán", department: "Cauca" },
+];
+
 const GROUP_FILTERS: { key: CategoryGroup | "todos" | "institucional"; label: string }[] = [
   { key: "todos", label: "Todos" },
   { key: "ayuda", label: "Ayuda" },
@@ -40,8 +53,13 @@ const HELP_ACTIONS = [
 ];
 
 export default function HomePage() {
+  useDocumentTitle("Ayuda comunitaria en Colombia");
+
   const [allReports, setAllReports] = useState<Report[]>([]);
-  const [city, setCity] = useState<string>("");
+  const [department, setDepartment] = useState("");
+  const [municipality, setMunicipality] = useState("");
+  const [nearMe, setNearMe] = useState<{ lat: number; lng: number } | null>(null);
+  const [locatingNearMe, setLocatingNearMe] = useState(false);
   const [filter, setFilter] = useState<(typeof GROUP_FILTERS)[number]["key"]>("todos");
   const [categoryFilter, setCategoryFilter] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -57,8 +75,17 @@ export default function HomePage() {
     setLoading(true);
     setError(null);
     try {
-      const res = await api.getReports({});
-      setAllReports(res.reports);
+      if (nearMe) {
+        const res = await api.getNearby({ lat: nearMe.lat, lng: nearMe.lng, radiusMeters: 20_000 });
+        setAllReports(res.reports);
+      } else {
+        const res = await api.getReports({
+          departmentName: department || undefined,
+          municipalityName: municipality || undefined,
+          pageSize: 50,
+        });
+        setAllReports(res.reports);
+      }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudieron cargar los reportes.");
     } finally {
@@ -68,9 +95,42 @@ export default function HomePage() {
 
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [department, municipality, nearMe]);
 
-  const mapCity = useMemo(() => city || allReports[0]?.city, [city, allReports]);
+  const municipalityOptions = COLOMBIA_LOCATIONS.find((d) => d.name === department)?.municipalities ?? [];
+
+  function useNearMeFilter() {
+    if (!navigator.geolocation) {
+      setError("Tu navegador no soporta geolocalización.");
+      return;
+    }
+    setLocatingNearMe(true);
+    navigator.geolocation.getCurrentPosition(
+      (pos) => {
+        setLocatingNearMe(false);
+        setDepartment("");
+        setMunicipality("");
+        setNearMe({ lat: pos.coords.latitude, lng: pos.coords.longitude });
+      },
+      () => {
+        setLocatingNearMe(false);
+        setError("No se pudo obtener tu ubicación.");
+      }
+    );
+  }
+
+  function selectZone(dep: string, mun: string) {
+    setNearMe(null);
+    setDepartment(dep);
+    setMunicipality(mun);
+  }
+
+  function clearTerritory() {
+    setNearMe(null);
+    setDepartment("");
+    setMunicipality("");
+  }
 
   const stats = useMemo(() => {
     const centrosAcopio = allReports.filter((r) => r.category.key === "centro_acopio").length;
@@ -86,6 +146,7 @@ export default function HomePage() {
     const counts = new Map<string, { label: string; count: number }>();
     for (const r of allReports) {
       if (r.category.group !== "necesidad") continue;
+      if (r.needStatus === "cubierto" || r.needStatus === "excedente") continue; // ya no urge
       const entry = counts.get(r.category.key) ?? { label: r.category.label, count: 0 };
       entry.count += 1;
       counts.set(r.category.key, entry);
@@ -95,15 +156,17 @@ export default function HomePage() {
       .sort((a, b) => b.count - a.count);
   }, [allReports]);
 
+  // department/municipality/nearMe ya filtraron en el servidor — esto solo
+  // acota lo que ya llegó, por grupo/categoría (cambiar de grupo no debería
+  // disparar otro fetch).
   const filteredReports = useMemo(() => {
     return allReports.filter((r) => {
-      if (city && r.city !== city) return false;
       if (categoryFilter) return r.category.key === categoryFilter;
       if (filter === "institucional") return !!r.organization;
       if (filter !== "todos") return r.category.group === filter;
       return true;
     });
-  }, [allReports, city, filter, categoryFilter]);
+  }, [allReports, filter, categoryFilter]);
 
   function goToList(key: string | null) {
     setCategoryFilter(key);
@@ -126,8 +189,8 @@ export default function HomePage() {
       {/* Hero */}
       <h1 className="text-3xl font-extrabold tracking-tight">Ayuda donde más hace falta.</h1>
       <p className="mt-2 max-w-2xl text-sm text-slate-400">
-        Coordinamos información sobre centros de acopio, albergues y necesidades de las comunidades afectadas por el
-        terremoto del 10 de agosto de 2026.
+        Coordinamos información sobre centros de acopio, albergues y necesidades de comunidades en toda Colombia —
+        con prioridad en las zonas afectadas por el terremoto del 10 de agosto de 2026.
       </p>
       <div className="mt-4 flex flex-col gap-2 sm:flex-row">
         <button
@@ -159,7 +222,9 @@ export default function HomePage() {
       {error && <p className="mt-4 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
 
       {/* Situación actual */}
-      <h2 className="mt-8 text-xs font-bold uppercase tracking-wide text-slate-400">Situación actual</h2>
+      <h2 className="mt-8 text-xs font-bold uppercase tracking-wide text-slate-400">
+        Situación actual{municipality ? ` — ${municipality}` : nearMe ? " — cerca de ti" : ""}
+      </h2>
       <div className="mt-2 grid grid-cols-2 gap-2 sm:grid-cols-4">
         <div className="rounded-xl border border-border bg-surface p-3">
           <div className="text-lg font-extrabold">📦 {stats.centrosAcopio}</div>
@@ -183,7 +248,7 @@ export default function HomePage() {
       <div ref={mapaRef} className="mt-8 scroll-mt-20">
         <h2 className="text-xs font-bold uppercase tracking-wide text-slate-400">¿Dónde se necesita ayuda?</h2>
         <div className="mt-2">
-          <MapView reports={filteredReports} city={mapCity} onSelect={(id) => navigate(`/reporte/${id}`)} />
+          <MapView reports={filteredReports} onSelect={(id) => navigate(`/reporte/${id}`)} />
         </div>
       </div>
 
@@ -234,19 +299,71 @@ export default function HomePage() {
       <div ref={listaRef} className="mt-8 scroll-mt-20">
         <h2 className="text-xs font-bold uppercase tracking-wide text-slate-400">Todos los reportes</h2>
 
-        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
-          <select
-            value={city}
-            onChange={(e) => setCity(e.target.value)}
-            className="h-11 rounded-xl border border-border bg-surface px-3 text-sm"
+        <div className="mt-3 flex flex-wrap gap-2">
+          <button
+            onClick={useNearMeFilter}
+            className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+              nearMe ? "border-accent bg-accent/20 text-accent" : "border-border bg-surface text-slate-200"
+            }`}
           >
-            <option value="">Todas las ciudades</option>
-            {CITIES.map((c) => (
-              <option key={c} value={c}>
-                {c}
+            {locatingNearMe ? "Ubicando…" : "📍 Cerca de mí"}
+          </button>
+          {PRIORITY_ZONES.map((z) => (
+            <button
+              key={z.municipality}
+              onClick={() => selectZone(z.department, z.municipality)}
+              className={`rounded-full border px-3 py-1.5 text-xs font-semibold ${
+                municipality === z.municipality && department === z.department
+                  ? "border-accent bg-accent/20 text-accent"
+                  : "border-border bg-surface text-slate-200"
+              }`}
+            >
+              {z.municipality}
+            </button>
+          ))}
+          {(department || municipality || nearMe) && (
+            <button onClick={clearTerritory} className="rounded-full border border-border bg-surface px-3 py-1.5 text-xs font-semibold text-slate-400">
+              Todo el país ✕
+            </button>
+          )}
+        </div>
+
+        <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <select
+            value={department}
+            onChange={(e) => {
+              setNearMe(null);
+              setDepartment(e.target.value);
+              setMunicipality("");
+            }}
+            className="h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm sm:w-56"
+          >
+            <option value="">Departamento…</option>
+            {COLOMBIA_LOCATIONS.map((d) => (
+              <option key={d.name} value={d.name}>
+                {d.name}
               </option>
             ))}
           </select>
+          <select
+            value={municipality}
+            onChange={(e) => {
+              setNearMe(null);
+              setMunicipality(e.target.value);
+            }}
+            disabled={!department}
+            className="h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm disabled:opacity-50 sm:w-56"
+          >
+            <option value="">Municipio…</option>
+            {municipalityOptions.map((m) => (
+              <option key={m} value={m}>
+                {m}
+              </option>
+            ))}
+          </select>
+        </div>
+
+        <div className="mt-3 flex flex-col gap-2 sm:flex-row">
           <button
             onClick={() => navigate("/necesito-ayuda")}
             className="flex h-14 flex-1 items-center justify-center gap-2 rounded-xl bg-danger px-4 text-base font-extrabold tracking-wide text-white shadow-lg shadow-danger/30 transition active:scale-[0.98] sm:h-12 sm:text-sm"
@@ -299,7 +416,7 @@ export default function HomePage() {
           {loading && <p className="text-sm text-slate-400">Cargando reportes…</p>}
           {!loading && filteredReports.length === 0 && (
             <p className="rounded-xl border border-border bg-surface p-6 text-center text-sm text-slate-400">
-              No hay reportes que coincidan con este filtro o ciudad.
+              No hay reportes que coincidan con este filtro o territorio.
             </p>
           )}
           {filteredReports.map((r) => (

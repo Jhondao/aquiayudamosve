@@ -44,6 +44,45 @@ enum ConfirmationType {
   incorrect
 }
 
+enum NeedStatus {
+  necesitamos
+  en_camino
+  parcialmente_cubierto
+  cubierto
+  excedente
+  desactualizado
+}
+
+// ACTUALIZACIÓN DEL PROMPT MAESTRO — cómo se obtuvo el pin de un reporte,
+// no si existe (todo reporte siempre tiene lat/lng reales). gps: geolocalización
+// del navegador. catalog: eligió departamento/municipio del catálogo y el
+// mapa embebido centró ahí. manual: escribió departamento/municipio libremente.
+enum LocationSource {
+  gps
+  catalog
+  manual
+}
+
+// PROMPT MAESTRO v3, Fase A — ledger de promesas de ayuda, separado de
+// Report.quantityReceived a propósito (sección 5: nunca sumar
+// automáticamente algo comprometido como recibido).
+enum CommitmentStatus {
+  committed
+  on_the_way
+  delivered
+  cancelled
+}
+
+// PROMPT MAESTRO — COMPARTIR REPORTES CONFIRMADOS POR WHATSAPP. Telemetría
+// mínima de qué canal se usó para compartir, nunca destinatarios ni números
+// (sección "ShareEvent" del documento).
+enum ShareChannel {
+  whatsapp
+  web_share
+  copy_link
+  save_image
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
@@ -66,6 +105,8 @@ model User {
   evidence          ReportEvidence[]
   updates           ReportUpdate[]
   flagsRaised       ReportFlag[]       @relation("FlagRaisedBy")
+  needCommitments   NeedCommitment[]
+  shareEvents       ShareEvent[]
   moderationActions ModerationAction[] @relation("ModerationActor")
   auditLogs         AuditLog[]         @relation("AuditActor")
   sessions          Session[]
@@ -130,8 +171,21 @@ model Report {
   categoryId         String
   title              String
   description        String       @db.Text
-  city               String
-  approxLocationText String
+  // ACTUALIZACIÓN DEL PROMPT MAESTRO — cobertura nacional en vez de solo
+  // Cali. Texto libre, nunca contra un catálogo/enum (ver
+  // reports.schemas.ts): el backend nunca bloquea una publicación porque el
+  // lugar no esté en una lista predeterminada.
+  departmentName     String
+  municipalityName   String
+  // Vereda/corregimiento/barrio + su nombre juntos (ej. "Vereda El Jardín")
+  // — nunca separado en tipo+nombre, nada en el producto filtra por eso.
+  localityName       String?
+  locationSource     LocationSource @default(catalog)
+  // Punto de referencia libre y opcional ("cerca al puente verde"). Antes
+  // era obligatorio y el único texto de ubicación; con
+  // departamento/municipio/localidad ya estructurados, forzarlo siempre
+  // pediría el mismo dato dos veces.
+  approxLocationText String?
   lat                Float
   lng                Float
   status             ReportStatus @default(active)
@@ -139,6 +193,15 @@ model Report {
   createdById        String
   organizationId     String?
   isSensitive        Boolean      @default(false)
+  // Fase 1 del PROMPT MAESTRO — solo relevantes cuando category.group es
+  // "necesidad" (NULL para el resto, igual que isSensitive con sus 3
+  // categoryKey de docenas). Sin @default en needStatus: el service decide
+  // el valor explícitamente por categoría, un DEFAULT de columna lo
+  // filtraría a todo Report.create() que no lo mande.
+  needStatus         NeedStatus?
+  quantityNeeded     Float?
+  quantityUnit       String?
+  quantityReceived   Float        @default(0)
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
   lastConfirmedAt    DateTime     @default(now())
@@ -151,8 +214,10 @@ model Report {
   evidence      ReportEvidence[]
   updates       ReportUpdate[]
   flags         ReportFlag[]
+  needCommitments NeedCommitment[]
+  shareEvents   ShareEvent[]
 
-  @@index([city])
+  @@index([departmentName, municipalityName])
   @@index([categoryId])
   @@index([status])
   @@index([lat, lng])
@@ -215,6 +280,42 @@ model ReportFlag {
 
   report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
   user   User   @relation("FlagRaisedBy", fields: [userId], references: [id])
+
+  @@index([reportId])
+}
+
+model NeedCommitment {
+  id               String           @id @default(uuid())
+  reportId         String
+  userId           String
+  quantity         Float
+  unit             String?
+  status           CommitmentStatus @default(committed)
+  estimatedArrival DateTime?
+  transportMethod  String?
+  note             String?
+  createdAt        DateTime         @default(now())
+  updatedAt        DateTime         @updatedAt
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id])
+
+  @@index([reportId])
+  @@index([userId])
+}
+
+// Telemetría best-effort de compartir (nunca bloquea la UI si falla, mismo
+// criterio que broadcastPush) — no se agrega al include de reportWithRelations,
+// nunca se sirve junto al reporte, solo se escribe.
+model ShareEvent {
+  id        String       @id @default(uuid())
+  reportId  String
+  userId    String?
+  channel   ShareChannel
+  createdAt DateTime     @default(now())
+
+  report Report @relation(fields: [reportId], references: [id], onDelete: Cascade)
+  user   User?  @relation(fields: [userId], references: [id])
 
   @@index([reportId])
 }

@@ -8,6 +8,30 @@ export type TrustLevel =
   | "desactualizada"
   | "cuestionada";
 
+export type NeedStatus =
+  | "necesitamos"
+  | "en_camino"
+  | "parcialmente_cubierto"
+  | "cubierto"
+  | "excedente"
+  | "desactualizado";
+
+export type LocationSource = "gps" | "catalog" | "manual";
+
+export type CommitmentStatus = "committed" | "on_the_way" | "delivered" | "cancelled";
+
+export interface Commitment {
+  id: string;
+  quantity: number;
+  unit: string | null;
+  status: CommitmentStatus;
+  estimatedArrival: string | null;
+  transportMethod: string | null;
+  note: string | null;
+  createdAt: string;
+  mine: boolean;
+}
+
 export interface Category {
   id: string;
   group: CategoryGroup;
@@ -34,11 +58,20 @@ export interface Report {
   id: string;
   title: string;
   description: string;
-  city: string;
-  approxLocationText: string;
+  departmentName: string;
+  municipalityName: string;
+  localityName: string | null;
+  locationSource: LocationSource;
+  approxLocationText: string | null;
   lat: number;
   lng: number;
   isSensitive: boolean;
+  needStatus: NeedStatus | null;
+  needStatusLabel: string | null;
+  quantityNeeded: number | null;
+  quantityUnit: string | null;
+  quantityReceived: number;
+  quantityPending: number | null;
   status: "active" | "inactive" | "hidden";
   category: { key: string; label: string; group: CategoryGroup };
   organization: { name: string; verified: boolean } | null;
@@ -52,6 +85,17 @@ export interface Report {
   createdById: string;
   evidence: Evidence[];
   timeline: TimelineEntry[];
+  needCommitments: Commitment[];
+}
+
+export type ShareStatus = "confirmed" | "institutional" | "covered" | "surplus" | "questioned" | "unconfirmed";
+export type ShareChannel = "whatsapp" | "web_share" | "copy_link" | "save_image";
+
+export interface ShareCard {
+  imageUrl: string | null;
+  shareUrl: string;
+  whatsappText: string;
+  status: ShareStatus;
 }
 
 export interface Profile {

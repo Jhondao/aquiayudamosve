@@ -13,6 +13,15 @@
   status = 200
   force = true
 
+# Same proxy pattern for the WhatsApp/social share gateway (backend, outside
+# /api — serves HTML with OG tags, not JSON). Must come before the SPA
+# catch-all below, since Netlify evaluates redirects in order.
+[[redirects]]
+  from = "/r/*"
+  to = "https://aquiayudamosve.onrender.com/r/:splat"
+  status = 200
+  force = true
+
 # SPA fallback so client-side routes (react-router-dom) don't 404 on refresh.
 [[redirects]]
   from = "/*"

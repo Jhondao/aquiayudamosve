@@ -3,31 +3,28 @@ import { useNavigate } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { GuestContactFields } from "../components/GuestContactFields";
+import { EMPTY_LOCATION, LocationSelector } from "../components/LocationSelector";
 import type { Category } from "../types";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
-// Cerrado a Cali por ahora — se reabre agregando las demás ciudades aquí.
-const CITIES = ["Cali"];
-const CITY_CENTER: Record<string, [number, number]> = {
-  Cali: [3.4516, -76.532],
-  Pereira: [4.8087, -75.6906],
-  Manizales: [5.0703, -75.5138],
-  Armenia: [4.5339, -75.6811],
-  Quibdó: [5.6947, -76.6611],
-};
 const SENSITIVE_KEYS = new Set(["personas_heridas", "personas_vulnerables", "rescate_requerido"]);
 
 export default function NeedHelpPage() {
+  useDocumentTitle("Necesito ayuda");
+
   const { profile } = useAuth();
   const navigate = useNavigate();
   const [categories, setCategories] = useState<Category[]>([]);
   const [categoryKey, setCategoryKey] = useState("");
-  const [city, setCity] = useState("");
   const [description, setDescription] = useState("");
+  const [location, setLocation] = useState(EMPTY_LOCATION);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [quantityNeeded, setQuantityNeeded] = useState("");
+  const [quantityUnit, setQuantityUnit] = useState("");
 
   useEffect(() => {
     api.getCategories().then((res) => setCategories(res.categories.filter((c) => c.group === "necesidad")));
@@ -37,8 +34,8 @@ export default function NeedHelpPage() {
 
   async function submit() {
     setError(null);
-    if (!categoryKey || !city) {
-      setError("Selecciona el tipo de necesidad y la ciudad.");
+    if (!categoryKey || !location.departmentName.trim() || !location.municipalityName.trim() || location.lat == null || location.lng == null) {
+      setError("Selecciona el tipo de necesidad y marca dónde, incluyendo el punto en el mapa.");
       return;
     }
     if (!profile && (!email.trim() || !phone.trim())) {
@@ -52,10 +49,14 @@ export default function NeedHelpPage() {
         categoryKey,
         title: label,
         description: description.trim() || label,
-        city,
-        approxLocationText: "Ubicación no especificada",
-        lat: CITY_CENTER[city][0],
-        lng: CITY_CENTER[city][1],
+        departmentName: location.departmentName.trim(),
+        municipalityName: location.municipalityName.trim(),
+        localityName: location.localityName.trim() || undefined,
+        locationSource: location.locationSource ?? "manual",
+        approxLocationText: location.approxLocationText.trim() || undefined,
+        lat: location.lat,
+        lng: location.lng,
+        ...(quantityNeeded.trim() ? { quantityNeeded: Number(quantityNeeded), quantityUnit: quantityUnit.trim() || undefined } : {}),
         ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
       });
       setSubmitted(true);
@@ -90,16 +91,6 @@ export default function NeedHelpPage() {
         ))}
       </select>
 
-      <label className="mt-4 block text-xs font-semibold text-slate-400">Ciudad</label>
-      <select value={city} onChange={(e) => setCity(e.target.value)} className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm">
-        <option value="">Selecciona…</option>
-        {CITIES.map((c) => (
-          <option key={c} value={c}>
-            {c}
-          </option>
-        ))}
-      </select>
-
       {isSensitive && (
         <div className="mt-3 rounded-xl border border-danger px-3 py-2 text-xs text-danger">
           Evita incluir nombres, edades exactas o direcciones muy precisas de personas vulnerables.
@@ -113,6 +104,33 @@ export default function NeedHelpPage() {
         placeholder="Ej: familia de 4 personas sin agua desde ayer"
         className="mt-1 min-h-[90px] w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm"
       />
+
+      <div className="mt-4 flex gap-2">
+        <div className="flex-1">
+          <label className="block text-xs font-semibold text-slate-400">Cantidad necesaria (opcional)</label>
+          <input
+            type="number"
+            min="0"
+            value={quantityNeeded}
+            onChange={(e) => setQuantityNeeded(e.target.value)}
+            placeholder="Ej: 500"
+            className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
+          />
+        </div>
+        <div className="w-28">
+          <label className="block text-xs font-semibold text-slate-400">Unidad</label>
+          <input
+            value={quantityUnit}
+            onChange={(e) => setQuantityUnit(e.target.value)}
+            placeholder="L, kg…"
+            className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
+          />
+        </div>
+      </div>
+
+      <div className="mt-4">
+        <LocationSelector value={location} onChange={setLocation} />
+      </div>
 
       {!profile && <GuestContactFields email={email} setEmail={setEmail} phone={phone} setPhone={setPhone} />}
 

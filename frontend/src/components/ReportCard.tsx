@@ -1,6 +1,7 @@
 import { Link } from "react-router-dom";
 import type { Report } from "../types";
 import { GROUP_META } from "./categoryStyle";
+import { NEED_STATUS_META } from "./needStatusStyle";
 import { TrustBadge } from "./TrustBadge";
 import { relativeTime } from "../utils/time";
 
@@ -26,8 +27,18 @@ export function ReportCard({ report, onConfirm }: { report: Report; onConfirm?: 
         {report.title}
       </Link>
       <div className="text-xs text-slate-400">
-        {report.approxLocationText} · {report.city}
+        {report.approxLocationText ?? report.localityName ?? report.municipalityName} · {report.municipalityName}, {report.departmentName}
       </div>
+
+      {report.needStatus && (
+        <div
+          className={`inline-flex w-fit items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold ${NEED_STATUS_META[report.needStatus].badgeClass}`}
+        >
+          {NEED_STATUS_META[report.needStatus].emoji} {report.needStatusLabel?.toUpperCase()}
+          {report.quantityNeeded != null &&
+            ` — ${report.quantityReceived}/${report.quantityNeeded} ${report.quantityUnit ?? ""}`}
+        </div>
+      )}
 
       <div className="flex items-center gap-2 text-xs text-slate-400">
         <TrustBadge level={report.trustLevel} label={report.trustLevelLabel} compact />

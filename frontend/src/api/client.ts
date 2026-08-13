@@ -1,4 +1,4 @@
-import type { Category, Profile, Report } from "../types";
+import type { Category, CommitmentStatus, NeedStatus, Profile, Report, ShareCard, ShareChannel } from "../types";
 
 // Kept in memory only — never localStorage/sessionStorage, so an XSS payload
 // reading storage can't lift a long-lived credential. Refresh token lives in
@@ -85,19 +85,30 @@ export const api = {
 
   getCategories: () => request<{ categories: Category[] }>("/api/categories"),
 
-  getReports: (params: { city?: string; group?: string; institutional?: boolean } = {}) => {
+  getReports: (
+    params: {
+      departmentName?: string;
+      municipalityName?: string;
+      group?: string;
+      institutional?: boolean;
+      page?: number;
+      pageSize?: number;
+    } = {}
+  ) => {
     const qs = new URLSearchParams();
-    if (params.city) qs.set("city", params.city);
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
     if (params.group) qs.set("group", params.group);
     if (params.institutional) qs.set("institutional", "true");
+    if (params.page) qs.set("page", String(params.page));
+    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
     return request<{ reports: Report[]; total: number }>(`/api/reports?${qs.toString()}`);
   },
   getReport: (id: string) => request<Report>(`/api/reports/${id}`),
-  getNearby: (params: { lat: number; lng: number; city: string; radiusMeters?: number; categoryKey?: string }) => {
+  getNearby: (params: { lat: number; lng: number; radiusMeters?: number; categoryKey?: string }) => {
     const qs = new URLSearchParams({
       lat: String(params.lat),
       lng: String(params.lng),
-      city: params.city,
       ...(params.radiusMeters ? { radiusMeters: String(params.radiusMeters) } : {}),
       ...(params.categoryKey ? { categoryKey: params.categoryKey } : {}),
     });
@@ -107,10 +118,15 @@ export const api = {
     categoryKey: string;
     title: string;
     description: string;
-    city: string;
-    approxLocationText: string;
+    departmentName: string;
+    municipalityName: string;
+    localityName?: string;
+    locationSource: "gps" | "catalog" | "manual";
+    approxLocationText?: string;
     lat: number;
     lng: number;
+    quantityNeeded?: number;
+    quantityUnit?: string;
     email?: string;
     phone?: string;
   }) => request<Report>("/api/reports", { method: "POST", body: JSON.stringify(data) }),
@@ -120,13 +136,37 @@ export const api = {
     request<Report>(`/api/reports/${id}/flag`, { method: "POST", body: JSON.stringify({ reason }) }),
   addUpdate: (id: string, text: string, deactivates?: boolean) =>
     request<Report>(`/api/reports/${id}/update`, { method: "POST", body: JSON.stringify({ text, deactivates }) }),
+  updateNeedStatus: (id: string, data: { needStatus?: NeedStatus; quantityReceived?: number }) =>
+    request<Report>(`/api/reports/${id}/need-status`, { method: "POST", body: JSON.stringify(data) }),
+  createCommitment: (
+    id: string,
+    data: {
+      quantity: number;
+      unit?: string;
+      status?: "committed" | "on_the_way";
+      estimatedArrival?: string;
+      transportMethod?: string;
+      note?: string;
+    }
+  ) => request<Report>(`/api/reports/${id}/commitments`, { method: "POST", body: JSON.stringify(data) }),
+  updateCommitment: (
+    id: string,
+    commitmentId: string,
+    data: { status?: CommitmentStatus; estimatedArrival?: string; note?: string }
+  ) => request<Report>(`/api/reports/${id}/commitments/${commitmentId}`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  // Públicos, sin auth — compartir un reporte no requiere sesión.
+  getShareCard: (id: string) => request<ShareCard>(`/api/reports/${id}/share-card`),
+  recordShareEvent: (id: string, channel: ShareChannel) =>
+    request<{ ok: true }>(`/api/reports/${id}/share-event`, { method: "POST", body: JSON.stringify({ channel }) }),
 
   myReports: () => request<{ profile: Profile; reports: Partial<Report>[] }>("/api/users/me/reports"),
 
   getFlaggedReports: () => request<{ reports: Report[] }>("/api/admin/reports/flagged"),
-  getAllReports: (params: { city?: string; status?: string } = {}) => {
+  getAllReports: (params: { departmentName?: string; municipalityName?: string; status?: string } = {}) => {
     const qs = new URLSearchParams();
-    if (params.city) qs.set("city", params.city);
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
     if (params.status) qs.set("status", params.status);
     return request<{ reports: Report[] }>(`/api/admin/reports?${qs.toString()}`);
   },

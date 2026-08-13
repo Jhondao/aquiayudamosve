@@ -3,9 +3,21 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { GROUP_META } from "../components/categoryStyle";
+import { NEED_STATUS_META } from "../components/needStatusStyle";
 import { TrustBadge } from "../components/TrustBadge";
+import { ShareSheet } from "../components/ShareSheet";
 import { relativeTime } from "../utils/time";
-import type { Report } from "../types";
+import type { CommitmentStatus, NeedStatus, Report } from "../types";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
+
+const CONFIRMED_LEVELS = new Set(["confirmado", "institucional"]);
+
+const COMMITMENT_STATUS_META: Record<CommitmentStatus, { label: string; emoji: string; badgeClass: string }> = {
+  committed: { label: "Prometido", emoji: "🤝", badgeClass: "bg-accent/20 text-accent" },
+  on_the_way: { label: "En camino", emoji: "🚚", badgeClass: "bg-warn/20 text-warn" },
+  delivered: { label: "Entregado", emoji: "✅", badgeClass: "bg-safe/20 text-safe" },
+  cancelled: { label: "Cancelado", emoji: "✖️", badgeClass: "bg-slate-500/20 text-slate-400" },
+};
 
 const QUICK_UPDATES: { label: string; deactivates?: boolean }[] = [
   { label: "Sigue activo" },
@@ -14,6 +26,15 @@ const QUICK_UPDATES: { label: string; deactivates?: boolean }[] = [
   { label: "Se agotaron los suministros" },
   { label: "La vía continúa bloqueada" },
   { label: "La información parece incorrecta" },
+];
+
+const NEED_STATUS_OPTIONS: { value: NeedStatus; label: string }[] = [
+  { value: "necesitamos", label: "Necesitamos" },
+  { value: "en_camino", label: "Ayuda en camino" },
+  { value: "parcialmente_cubierto", label: "Parcialmente cubierto" },
+  { value: "cubierto", label: "Cubierto — no traer más" },
+  { value: "excedente", label: "Excedente" },
+  { value: "desactualizado", label: "Desactualizado" },
 ];
 
 export default function ReportDetailPage() {
@@ -25,6 +46,23 @@ export default function ReportDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const [needStatusInput, setNeedStatusInput] = useState<NeedStatus>("necesitamos");
+  const [quantityReceivedInput, setQuantityReceivedInput] = useState(0);
+  const [commitQuantity, setCommitQuantity] = useState("");
+  const [commitUnit, setCommitUnit] = useState("");
+  const [commitOnTheWay, setCommitOnTheWay] = useState(false);
+  const [commitEta, setCommitEta] = useState("");
+  const [commitTransport, setCommitTransport] = useState("");
+  const [shareOpen, setShareOpen] = useState(false);
+  const [shareBanner, setShareBanner] = useState<{ message: string; cta: string } | null>(null);
+
+  // Título dinámico solo para el <title> de la pestaña / historial del
+  // navegador y para Googlebot (que sí ejecuta JS antes de indexar). Los
+  // bots de vista previa de WhatsApp/Telegram/Facebook nunca ejecutan JS y
+  // por lo tanto nunca ven esto — para ellos existe la puerta
+  // server-rendered /r/:id (ver backend/src/modules/share/shareGateway.routes.ts),
+  // que sí sirve un og:title específico de este reporte.
+  useDocumentTitle(report?.title ?? "Detalle del reporte");
 
   async function load() {
     if (!id) return;
@@ -34,6 +72,12 @@ export default function ReportDetailPage() {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar el reporte.");
     }
   }
+
+  useEffect(() => {
+    if (report?.needStatus) setNeedStatusInput(report.needStatus);
+    if (report) setQuantityReceivedInput(report.quantityReceived);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.id]);
 
   useEffect(() => {
     load();
@@ -69,12 +113,64 @@ export default function ReportDetailPage() {
     });
   }
 
+  async function confirmReportAndOfferShare() {
+    const wasConfirmed = report != null && CONFIRMED_LEVELS.has(report.trustLevel);
+    await guardedAction(async () => {
+      const updated = await api.confirmReport(report!.id, "confirm");
+      setReport(updated);
+      if (!wasConfirmed && CONFIRMED_LEVELS.has(updated.trustLevel)) {
+        setShareBanner({
+          message: "Este reporte ya está confirmado por la comunidad.",
+          cta: "Compartir con mi comunidad",
+        });
+      }
+    });
+  }
+
+  async function markCoveredAndOfferShare() {
+    const wasCovered = report?.needStatus === "cubierto";
+    await guardedAction(async () => {
+      const updated = await api.updateNeedStatus(report!.id, { needStatus: "cubierto" });
+      setReport(updated);
+      if (!wasCovered && updated.needStatus === "cubierto") {
+        setShareBanner({ message: "¡Gracias por actualizar!", cta: "Compartir actualización por WhatsApp" });
+      }
+    });
+  }
+
+  async function submitCommitment() {
+    const quantity = Number(commitQuantity);
+    if (!quantity || quantity <= 0) {
+      setError("Indica cuánto puedes aportar.");
+      return;
+    }
+    await guardedAction(async () => {
+      setReport(
+        await api.createCommitment(report!.id, {
+          quantity,
+          unit: commitUnit.trim() || undefined,
+          status: commitOnTheWay ? "on_the_way" : "committed",
+          estimatedArrival: commitOnTheWay && commitEta ? new Date(commitEta).toISOString() : undefined,
+          transportMethod: commitOnTheWay ? commitTransport.trim() || undefined : undefined,
+        })
+      );
+      setCommitQuantity("");
+      setCommitUnit("");
+      setCommitOnTheWay(false);
+      setCommitEta("");
+      setCommitTransport("");
+    });
+  }
+
   if (error && !report) {
     return <p className="mx-auto max-w-lg px-4 py-10 text-center text-sm text-danger">{error}</p>;
   }
   if (!report) return <p className="mx-auto max-w-lg px-4 py-10 text-center text-sm text-slate-400">Cargando…</p>;
 
   const group = GROUP_META[report.category.group];
+  const committedTotal = report.needCommitments
+    .filter((c) => c.status === "committed" || c.status === "on_the_way")
+    .reduce((sum, c) => sum + c.quantity, 0);
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6">
@@ -107,7 +203,8 @@ export default function ReportDetailPage() {
       </div>
       <h1 className="mt-2 text-xl font-extrabold">{report.title}</h1>
       <p className="text-xs text-slate-400">
-        {report.approxLocationText} · {report.city}
+        {[report.approxLocationText, report.localityName].filter(Boolean).join(" · ") || "Ubicación aproximada"} ·{" "}
+        {report.municipalityName}, {report.departmentName}
       </p>
       <p className="mt-3 text-sm">{report.description}</p>
 
@@ -125,7 +222,7 @@ export default function ReportDetailPage() {
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
-          onClick={() => guardedAction(async () => setReport(await api.confirmReport(report.id, "confirm")))}
+          onClick={confirmReportAndOfferShare}
           className="rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white"
         >
           ✓ CONFIRMAR
@@ -142,7 +239,208 @@ export default function ReportDetailPage() {
         >
           REPORTAR INCORRECTO
         </button>
+        <button
+          onClick={() => setShareOpen(true)}
+          className="rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-semibold"
+        >
+          COMPARTIR
+        </button>
       </div>
+
+      {shareBanner && (
+        <div className="mt-3 flex flex-wrap items-center justify-between gap-2 rounded-xl border border-safe bg-safe/10 px-3 py-2.5 text-sm">
+          <span>{shareBanner.message}</span>
+          <button
+            onClick={() => {
+              setShareOpen(true);
+              setShareBanner(null);
+            }}
+            className="rounded-lg bg-safe px-3 py-1.5 text-xs font-bold text-white"
+          >
+            {shareBanner.cta}
+          </button>
+        </div>
+      )}
+
+      {report.category.group === "necesidad" && (
+        <div className="mt-4 rounded-2xl border border-border bg-surface p-4">
+          <h2 className="text-xs font-bold uppercase tracking-wide text-slate-400">Estado de la necesidad</h2>
+          {report.needStatus && (
+            <div
+              className={`mt-2 inline-flex w-fit items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold ${NEED_STATUS_META[report.needStatus].badgeClass}`}
+            >
+              {NEED_STATUS_META[report.needStatus].emoji} {report.needStatusLabel?.toUpperCase()}
+              {report.quantityNeeded != null &&
+                ` — ${report.quantityReceived}/${report.quantityNeeded} ${report.quantityUnit ?? ""}`}
+            </div>
+          )}
+
+          <button
+            onClick={markCoveredAndOfferShare}
+            className="mt-3 block w-full rounded-xl bg-safe px-4 py-2.5 text-sm font-bold text-white"
+          >
+            ✅ Ya está cubierto — no traer más
+          </button>
+
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <select
+              value={needStatusInput}
+              onChange={(e) => setNeedStatusInput(e.target.value as NeedStatus)}
+              className="h-11 rounded-xl border border-border bg-surface2 px-3 text-sm"
+            >
+              {NEED_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="0"
+              value={quantityReceivedInput}
+              onChange={(e) => setQuantityReceivedInput(Number(e.target.value))}
+              placeholder="Cantidad recibida"
+              className="h-11 w-full rounded-xl border border-border bg-surface2 px-3 text-sm sm:w-40"
+            />
+            <button
+              onClick={() =>
+                guardedAction(async () =>
+                  setReport(
+                    await api.updateNeedStatus(report.id, {
+                      needStatus: needStatusInput,
+                      quantityReceived: quantityReceivedInput,
+                    })
+                  )
+                )
+              }
+              className="h-11 rounded-xl border border-border px-4 text-sm font-semibold"
+            >
+              Actualizar estado
+            </button>
+          </div>
+
+          {report.quantityNeeded != null && (
+            <div className="mt-4 grid grid-cols-4 gap-2 text-center">
+              <div>
+                <p className="text-sm font-bold">{report.quantityNeeded}</p>
+                <p className="text-[10px] uppercase text-slate-400">Necesarios</p>
+              </div>
+              <div>
+                <p className="text-sm font-bold">{committedTotal}</p>
+                <p className="text-[10px] uppercase text-slate-400">Comprometidos</p>
+              </div>
+              <div>
+                <p className="text-sm font-bold">{report.quantityReceived}</p>
+                <p className="text-[10px] uppercase text-slate-400">Recibidos</p>
+              </div>
+              <div>
+                <p className="text-sm font-bold">{report.quantityPending ?? "—"}</p>
+                <p className="text-[10px] uppercase text-slate-400">Pendientes</p>
+              </div>
+            </div>
+          )}
+
+          <div className="mt-4 rounded-xl border border-border bg-surface2 p-3">
+            <h3 className="text-xs font-bold">Puedo ayudar con esto</h3>
+            <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+              <input
+                type="number"
+                min="0"
+                step="any"
+                value={commitQuantity}
+                onChange={(e) => setCommitQuantity(e.target.value)}
+                placeholder="Cantidad"
+                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm sm:w-28"
+              />
+              <input
+                value={commitUnit}
+                onChange={(e) => setCommitUnit(e.target.value)}
+                placeholder="Unidad (kg, cajas...)"
+                className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+              />
+            </div>
+            <label className="mt-2 flex items-center gap-2 text-xs">
+              <input type="checkbox" checked={commitOnTheWay} onChange={(e) => setCommitOnTheWay(e.target.checked)} />
+              Voy en camino ahora
+            </label>
+            {commitOnTheWay && (
+              <div className="mt-2 flex flex-col gap-2 sm:flex-row">
+                <input
+                  type="datetime-local"
+                  value={commitEta}
+                  onChange={(e) => setCommitEta(e.target.value)}
+                  className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                />
+                <input
+                  value={commitTransport}
+                  onChange={(e) => setCommitTransport(e.target.value)}
+                  placeholder="Cómo te movilizas (opcional)"
+                  className="h-10 w-full rounded-lg border border-border bg-surface px-3 text-sm"
+                />
+              </div>
+            )}
+            <button onClick={submitCommitment} className="mt-2 h-10 w-full rounded-lg bg-accent text-sm font-bold text-white">
+              Comprometer ayuda
+            </button>
+          </div>
+
+          {report.needCommitments.length > 0 && (
+            <div className="mt-3 flex flex-col gap-2">
+              {report.needCommitments.map((c) => (
+                <div key={c.id} className="rounded-xl border border-border bg-surface2 p-3 text-xs">
+                  <div className="flex flex-wrap items-center justify-between gap-2">
+                    <span className={`inline-flex items-center gap-1 rounded-lg px-2 py-1 font-bold ${COMMITMENT_STATUS_META[c.status].badgeClass}`}>
+                      {COMMITMENT_STATUS_META[c.status].emoji} {COMMITMENT_STATUS_META[c.status].label}
+                    </span>
+                    <span className="text-slate-400">{relativeTime(c.createdAt)}</span>
+                  </div>
+                  <p className="mt-1.5">
+                    {c.quantity} {c.unit ?? ""}
+                    {c.transportMethod && ` · ${c.transportMethod}`}
+                  </p>
+                  {c.note && <p className="mt-1 text-slate-400">{c.note}</p>}
+                  {c.mine && c.status !== "delivered" && c.status !== "cancelled" && (
+                    <div className="mt-2 flex flex-wrap gap-2">
+                      {c.status !== "on_the_way" && (
+                        <button
+                          onClick={() =>
+                            guardedAction(async () =>
+                              setReport(await api.updateCommitment(report.id, c.id, { status: "on_the_way" }))
+                            )
+                          }
+                          className="rounded-lg border border-border px-2.5 py-1 font-semibold"
+                        >
+                          Marcar en camino
+                        </button>
+                      )}
+                      <button
+                        onClick={() =>
+                          guardedAction(async () =>
+                            setReport(await api.updateCommitment(report.id, c.id, { status: "delivered" }))
+                          )
+                        }
+                        className="rounded-lg border border-border px-2.5 py-1 font-semibold"
+                      >
+                        Marcar entregado
+                      </button>
+                      <button
+                        onClick={() =>
+                          guardedAction(async () =>
+                            setReport(await api.updateCommitment(report.id, c.id, { status: "cancelled" }))
+                          )
+                        }
+                        className="rounded-lg border border-border px-2.5 py-1 font-semibold text-danger"
+                      >
+                        Cancelar
+                      </button>
+                    </div>
+                  )}
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+      )}
 
       <h2 className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-400">Actualizaciones rápidas</h2>
       <div className="mt-2 flex flex-wrap gap-2">
@@ -169,7 +467,11 @@ export default function ReportDetailPage() {
             {report.evidence.map((e) => (
               <div key={e.id} className="rounded-xl border border-border bg-surface p-3 text-xs">
                 {e.imageUrl && (
-                  <img src={e.imageUrl} alt="Evidencia adjunta" className="mb-2 max-h-64 w-full rounded-lg object-cover" />
+                  <img
+                    src={e.imageUrl}
+                    alt={`Foto de evidencia aportada por la comunidad para el reporte "${report.title}"`}
+                    className="mb-2 max-h-64 w-full rounded-lg object-cover"
+                  />
                 )}
                 {e.sourceUrl && (
                   <a href={e.sourceUrl} target="_blank" rel="noopener noreferrer nofollow" className="block text-accent underline">
@@ -215,6 +517,8 @@ export default function ReportDetailPage() {
           </div>
         ))}
       </div>
+
+      <ShareSheet reportId={report.id} open={shareOpen} onClose={() => setShareOpen(false)} />
     </div>
   );
 }

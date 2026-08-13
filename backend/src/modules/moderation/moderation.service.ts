@@ -10,6 +10,7 @@ const reportInclude = {
   evidence: true,
   flags: { where: { resolved: false } },
   updates: { orderBy: { createdAt: "asc" as const } },
+  needCommitments: { orderBy: { createdAt: "desc" as const } },
 };
 
 export async function listFlaggedReports() {
@@ -21,23 +22,24 @@ export async function listFlaggedReports() {
     include: reportInclude,
     orderBy: { updatedAt: "desc" },
   });
-  return reports.map(serializeReport);
+  return reports.map((r) => serializeReport(r));
 }
 
 // Unlike the public /api/reports listing, this is not limited to
 // active/inactive — moderators need to see hidden reports here too, and
 // nothing is paginated since admin review is expected to look at everything.
-export async function listAllReports(filters: { city?: string; status?: string }) {
+export async function listAllReports(filters: { departmentName?: string; municipalityName?: string; status?: string }) {
   const reports = await prisma.report.findMany({
     where: {
       deletedAt: null,
-      ...(filters.city ? { city: filters.city } : {}),
+      ...(filters.departmentName ? { departmentName: filters.departmentName } : {}),
+      ...(filters.municipalityName ? { municipalityName: filters.municipalityName } : {}),
       ...(filters.status ? { status: filters.status as never } : {}),
     },
     include: reportInclude,
     orderBy: { createdAt: "desc" },
   });
-  return reports.map(serializeReport);
+  return reports.map((r) => serializeReport(r));
 }
 
 async function recordAction(adminId: string, action: string, reportId: string, reason: string) {

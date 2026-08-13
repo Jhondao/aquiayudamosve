@@ -6,6 +6,7 @@ export const moderationActionSchema = z.object({
 });
 
 export const listAllReportsQuerySchema = z.object({
-  city: z.string().optional(),
+  departmentName: z.string().optional(),
+  municipalityName: z.string().optional(),
   status: z.enum(["active", "inactive", "hidden"]).optional(),
 });

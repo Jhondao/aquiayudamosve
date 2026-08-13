@@ -2,8 +2,11 @@ import { useState } from "react";
 import { Link, useNavigate } from "react-router-dom";
 import { ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 export default function RegisterPage() {
+  useDocumentTitle("Crear cuenta");
+
   const { register } = useAuth();
   const navigate = useNavigate();
   const [displayName, setDisplayName] = useState("");
