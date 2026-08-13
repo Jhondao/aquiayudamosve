@@ -1,8 +1,9 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
-import { confirmationLimiter, createReportLimiter } from "../../middleware/rateLimit";
+import { confirmationLimiter, createReportLimiter, guestActionLimiter } from "../../middleware/rateLimit";
 import { validateBody, validateQuery } from "../../middleware/validate";
 import { HttpError } from "../../middleware/errorHandler";
+import { requireRecaptchaForGuests } from "../../lib/recaptcha";
 import {
   addEvidence,
   addReportUpdate,
@@ -68,13 +69,27 @@ router.post("/", createReportLimiter, validateBody(createReportSchema), async (r
   }
 });
 
-router.post("/:id/confirm", requireAuth, confirmationLimiter, validateBody(confirmSchema), async (req, res, next) => {
-  try {
-    res.json(await confirmReport(req.params.id, req.user!.id, req.body.type));
-  } catch (err) {
-    next(err);
+// No requireAuth: confirmar/marcar dudoso/marcar incorrecto tampoco debe
+// pedir cuenta (mismo criterio que publicar — resolveGuestContact en
+// reports.service.ts). guestActionLimiter (más estricto, por IP, se salta a
+// sí mismo si ya hay sesión) + confirmationLimiter + reCAPTCHA (solo exige
+// algo si Google marcó el token como inválido — ver requireRecaptchaForGuests)
+// son la defensa anti-spam de reemplazo.
+router.post(
+  "/:id/confirm",
+  guestActionLimiter,
+  confirmationLimiter,
+  validateBody(confirmSchema),
+  requireRecaptchaForGuests("CONFIRM_REPORT"),
+  async (req, res, next) => {
+    try {
+      const { type, email, phone, displayName } = req.body;
+      res.json(await confirmReport(req.params.id, { userId: req.user?.id, email, phone, displayName }, type));
+    } catch (err) {
+      next(err);
+    }
   }
-});
+);
 
 router.post("/:id/flag", requireAuth, confirmationLimiter, validateBody(flagSchema), async (req, res, next) => {
   try {

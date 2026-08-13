@@ -40,3 +40,17 @@ export const confirmationLimiter = rateLimit({
   keyGenerator: (req) => req.user?.id ?? req.ip ?? "anon",
   message: { error: "Estás confirmando reportes muy rápido. Espera un momento." },
 });
+
+// Confirmar sin cuenta puede acuñar una identidad guest nueva por intento —
+// más caro que confirmationLimiter, que ya cubre a usuarios con sesión, así
+// que este se salta a sí mismo cuando hay req.user (ese caso ya está
+// cubierto arriba) y aplica un tope más estricto por IP para el resto.
+export const guestActionLimiter = rateLimit({
+  windowMs: 10 * 60 * 1000,
+  limit: 8,
+  standardHeaders: true,
+  legacyHeaders: false,
+  keyGenerator: (req) => req.ip ?? "anon",
+  skip: (req) => Boolean(req.user),
+  message: { error: "Demasiadas acciones sin cuenta desde esta red. Espera antes de continuar o inicia sesión." },
+});

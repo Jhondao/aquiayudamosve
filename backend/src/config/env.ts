@@ -31,4 +31,10 @@ export const env = {
   vapidPublicKey: process.env.VAPID_PUBLIC_KEY,
   vapidPrivateKey: process.env.VAPID_PRIVATE_KEY,
   vapidContact: process.env.VAPID_CONTACT ?? "mailto:contacto@aquiayudamosve.org",
+  // reCAPTCHA Enterprise: verifica confirmaciones hechas sin cuenta (ver
+  // lib/recaptcha.ts). Igual que STORAGE_*/VAPID_*, opcional y validado solo
+  // al usarse — sin esto configurado, verifyRecaptcha() deja pasar la acción
+  // (el honeypot + el rate limit de invitados siguen aplicando igual).
+  recaptchaProjectId: process.env.RECAPTCHA_PROJECT_ID,
+  recaptchaApiKey: process.env.RECAPTCHA_API_KEY,
 };

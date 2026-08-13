@@ -130,8 +130,11 @@ export const api = {
     email?: string;
     phone?: string;
   }) => request<Report>("/api/reports", { method: "POST", body: JSON.stringify(data) }),
-  confirmReport: (id: string, type: "confirm" | "unsure" | "incorrect") =>
-    request<Report>(`/api/reports/${id}/confirm`, { method: "POST", body: JSON.stringify({ type }) }),
+  confirmReport: (
+    id: string,
+    type: "confirm" | "unsure" | "incorrect",
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<Report>(`/api/reports/${id}/confirm`, { method: "POST", body: JSON.stringify({ type, ...guest }) }),
   flagReport: (id: string, reason: string) =>
     request<Report>(`/api/reports/${id}/flag`, { method: "POST", body: JSON.stringify({ reason }) }),
   addUpdate: (id: string, text: string, deactivates?: boolean) =>

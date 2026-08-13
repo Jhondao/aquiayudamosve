@@ -41,6 +41,26 @@ export const confirmSchema = z.object({
   shareLocation: z.boolean().optional(),
   approxLat: z.number().gte(-90).lte(90).optional(),
   approxLng: z.number().gte(-180).lte(180).optional(),
+  // Solo requeridos cuando se confirma sin sesión — el guard vive en
+  // reports.service.ts#confirmReport (mismo motivo que needStatusSchema: sin
+  // .refine(), validateBody() está tipado AnyZodObject). A diferencia de
+  // createReportSchema, aquí el celular es opcional a propósito — confirmar
+  // es una acción más liviana que publicar un reporte completo.
+  displayName: z.string().trim().min(2).max(80).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  phone: z
+    .string()
+    .trim()
+    .min(7)
+    .max(20)
+    .regex(/^[0-9+()\-\s]+$/, "Celular inválido.")
+    .optional(),
+  recaptchaToken: z.string().min(1).optional(),
+  // Honeypot anti-spam: un campo que un humano real nunca llena (se oculta
+  // con CSS en el formulario, nunca con display:none/type=hidden — un bot
+  // rudimentario sí detecta esos). Si llega con contenido, la validación
+  // falla aquí mismo con un 400 genérico, sin lógica extra en el service.
+  website: z.string().max(0, "Campo inválido.").optional(),
 });
 
 export const flagSchema = z.object({

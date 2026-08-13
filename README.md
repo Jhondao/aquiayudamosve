@@ -26,7 +26,8 @@ La home no es una lista genérica de reportes: está organizada como un panel de
 
 ## Funcionalidad principal
 
-- Reportar y pedir ayuda **sin cuenta**: basta correo + celular; por debajo se crea un usuario "guest" (sin contraseña) que luego se puede reclamar registrándose con ese mismo correo ([backend/src/modules/reports/reports.service.ts](backend/src/modules/reports/reports.service.ts))
+- Reportar y pedir ayuda **sin cuenta**: basta correo + celular; por debajo se crea/reutiliza un usuario "guest" (sin contraseña) que luego se puede reclamar registrándose con ese mismo correo
+- **Confirmar un reporte sin cuenta**: basta nombre + correo **o** celular (no ambos) — nunca crea una cuenta ni pide contraseña, solo se pide una vez por visita (se recuerda entre reportes, en memoria, nunca persistido). Anti-spam: honeypot, un límite de tasa propio por IP, y verificación opcional con reCAPTCHA Enterprise (nunca bloquea si el token no llegó — solo si Google lo marca como inválido) ([backend/src/modules/reports/reports.service.ts](backend/src/modules/reports/reports.service.ts), [backend/src/lib/recaptcha.ts](backend/src/lib/recaptcha.ts))
 - Reportes geolocalizados por categoría (ayuda, necesidad, crítico, info), visibles en el mapa con su categoría como etiqueta y filtrables por departamento/municipio o categoría
 - Ubicación flexible en cualquier lugar de Colombia (departamento → municipio del catálogo, vereda/corregimiento/barrio a mano, GPS, o "cerca de mí"): nunca bloquea una publicación porque el lugar no esté en una lista predeterminada ([frontend/src/components/LocationSelector.tsx](frontend/src/components/LocationSelector.tsx))
 - Confirmación comunitaria de reportes (confirmar / dudoso / incorrecto) y sistema de reputación (nuevo → colaborador → colaborador confiable → voluntario verificado → organización → entidad institucional)
@@ -102,8 +103,9 @@ Copia `backend/.env.example` a `backend/.env` y ajusta **todos** estos valores p
 | `JWT_ACCESS_TTL` / `JWT_REFRESH_TTL_DAYS` | Tiempos de expiración | Defaults razonables: `15m` / `7` días |
 | `STALE_HOURS_THRESHOLD` | Horas sin confirmación antes de que un reporte empiece a decaer | Ajustar según criterio del producto |
 | `STORAGE_ENDPOINT` / `STORAGE_REGION` / `STORAGE_ACCESS_KEY_ID` / `STORAGE_SECRET_ACCESS_KEY` / `STORAGE_BUCKET` / `STORAGE_PUBLIC_URL` | Credenciales S3 de Supabase Storage | Ver [Fotos de evidencia](#fotos-de-evidencia) |
+| `RECAPTCHA_PROJECT_ID` / `RECAPTCHA_API_KEY` | Verificación de reCAPTCHA Enterprise para confirmaciones sin cuenta | Opcional — sin esto, la verificación se omite (el honeypot y el límite de tasa por IP siguen aplicando). Project ID y API key desde [Google Cloud Console](https://console.cloud.google.com/security/recaptcha) |
 
-El backend valida en el arranque ([backend/src/config/env.ts](backend/src/config/env.ts)) que `DATABASE_URL`, `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` existan. Las variables `STORAGE_*` se validan solo al subir una foto ([backend/src/lib/objectStorage.ts](backend/src/lib/objectStorage.ts)), así que en dev/tests pueden quedar vacías.
+El backend valida en el arranque ([backend/src/config/env.ts](backend/src/config/env.ts)) que `DATABASE_URL`, `JWT_ACCESS_SECRET` y `JWT_REFRESH_SECRET` existan. Las variables `STORAGE_*` se validan solo al subir una foto ([backend/src/lib/objectStorage.ts](backend/src/lib/objectStorage.ts)) y `RECAPTCHA_*` solo al confirmar un reporte sin cuenta ([backend/src/lib/recaptcha.ts](backend/src/lib/recaptcha.ts)), así que en dev/tests pueden quedar vacías.
 
 ### Fotos de evidencia
 

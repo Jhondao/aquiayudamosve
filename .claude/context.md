@@ -127,6 +127,10 @@ perezosamente solo cuando se usa esa feature específica:
 - `STORAGE_*` (Supabase Storage): solo se valida al subir una foto de evidencia.
 - `VAPID_*` (push): solo se valida al enviar un push; sin ellas, `/api/push/vapid-public-key`
   devuelve 404 y el frontend simplemente no ofrece activar notificaciones.
+- `RECAPTCHA_PROJECT_ID`/`RECAPTCHA_API_KEY` (reCAPTCHA Enterprise, ver 4.2 "Confirmar sin
+  cuenta"): sin ellas, `verifyRecaptcha()` deja pasar la acción — el honeypot y
+  `guestActionLimiter` siguen aplicando igual, así que esto nunca bloquea el arranque ni la
+  funcionalidad, solo reduce una capa de la defensa anti-spam.
 - `STALE_HOURS_THRESHOLD` (default 6): horas sin confirmación antes de que un reporte empiece a
   decaer en el algoritmo de confianza.
 - `CORS_ORIGIN` (default `http://localhost:5173`).
@@ -177,14 +181,19 @@ seteado, el body debe traer `email` + `phone`, y `resolveGuestContact()` en `rep
 
 1. Busca un `User` por ese email.
 2. Si existe y **no** es guest (`isGuest: false`, cuenta real con password) → **409**, rechaza —
-   así nadie puede publicar a nombre de otra persona solo escribiendo su correo.
-3. Si existe y es guest → lo reutiliza como `createdById` (actualiza el phone si cambió).
-4. Si no existe → crea un `User` nuevo con `isGuest: true`, `passwordHash: null`,
-   `displayName` derivado del email, y su `UserReputation` en `nuevo`/0.
+   así nadie puede actuar a nombre de otra persona solo escribiendo su correo.
+3. Si existe y es guest → lo reutiliza como identidad (actualiza el phone si vino uno nuevo, nunca
+   pisa el `displayName` que ya tenía).
+4. Si no existe → crea un `User` nuevo con `isGuest: true`, `passwordHash: null`, la
+   `displayName` que se le haya pasado (o derivada del email si no vino ninguna), y su
+   `UserReputation` en `nuevo`/0.
 
-Esto le da al sistema de confianza una identidad estable por reporte **sin introducir un modelo de
-datos paralelo** — un guest es un `User` normal, solo que sin password. Ver también 4.1 (cómo se
-"reclama" después via registro).
+Esto le da al sistema de confianza una identidad estable **sin introducir un modelo de datos
+paralelo** — un guest es un `User` normal, solo que sin password. `phone`/`displayName` son
+opcionales en la firma (`email` es el único dato realmente obligatorio, es la clave única de
+identidad) — publicar exige ambos igual por su propio schema, pero **confirmar sin cuenta (abajo)
+solo exige nombre + correo**, reusando la misma función. Ver también 4.1 (cómo se "reclama" después
+vía registro).
 
 Categorías **sensibles** (`SENSITIVE_CATEGORY_KEYS`: `personas_heridas`, `personas_vulnerables`,
 `rescate_requerido`) hacen que `createReport` llame `coarsenCoordinates()` (redondea a ~111m,
@@ -194,11 +203,37 @@ una ubicación precisa para personas vulnerables.
 Al crear un reporte de grupo `critico` o `necesidad`, se dispara `broadcastPush()` (fire-and-forget,
 no bloquea la respuesta) con un emoji según el grupo.
 
-Otros endpoints, todos con `requireAuth` (a propósito — publicar es lo que se abrió, actuar sobre
-el reporte de otro sigue pidiendo cuenta):
-- `POST /:id/confirm` — tipo `confirm`/`unsure`/`incorrect`. Único por `(reportId, userId, type)`
-  (409 si se repite). Si es `confirm`, actualiza `lastConfirmedAt` y llama
-  `rewardUsefulConfirmation` (reputación).
+**Confirmar sin cuenta:** `POST /:id/confirm` — tipo `confirm`/`unsure`/`incorrect`, único por
+`(reportId, userId, type)` (409 si se repite). Si es `confirm`, actualiza `lastConfirmedAt` y llama
+`rewardUsefulConfirmation` (reputación). Tampoco requiere sesión (mismo criterio que publicar): sin
+`req.user`, el body debe traer `displayName` + (`email` **o** `phone`, no ambos obligatorios — a
+diferencia de publicar, que sí exige los dos juntos). Sin `userId` y sin ninguno de los dos
+contactos, 400. Si solo llega `phone` (sin `email`), `syntheticEmailForPhone(phone)` genera un
+correo placeholder determinístico (`tel-<dígitos>@guest.aquiayudamosve.local`, nunca mostrado en la
+UI) para satisfacer la columna `email` (`NOT NULL @unique`) antes de llamar a
+`resolveGuestContact()` — dos personas confirmando con el mismo celular terminan bajo la misma
+identidad guest, a propósito, mismo criterio que ya aplica hoy por correo repetido.
+
+Anti-spam para esta única puerta sin cuenta (antes, `requireAuth` ya cerraba el paso):
+- **Honeypot**: `confirmSchema` tiene un campo `website` (`z.string().max(0)`) que un humano real
+  nunca ve — el frontend lo oculta con CSS (`sr-only` + `aria-hidden`, nunca `display:none`/
+  `type=hidden`, que un bot rudimentario sí detecta). Si llega con contenido, 400 automático en la
+  validación del schema, sin lógica extra.
+- **`guestActionLimiter`** (`middleware/rateLimit.ts`): 8 intentos / 10 min por IP, con
+  `skip: (req) => Boolean(req.user)` — no le suma restricción a un usuario con sesión (ya cubierto
+  por `confirmationLimiter`, 20/min), pero limita fuerte a quien no tiene cuenta, porque cada
+  intento puede acuñar una identidad guest nueva.
+- **reCAPTCHA Enterprise** (`lib/recaptcha.ts`, `requireRecaptchaForGuests`): el frontend genera un
+  token (`frontend/src/utils/recaptcha.ts`, `grecaptcha.enterprise.execute`) solo cuando no hay
+  sesión. El backend **solo bloquea si el token llegó y Google lo marcó inválido/con score bajo**
+  (`< 0.5`) — un token ausente (script bloqueado por un ad-blocker, sin red, o `RECAPTCHA_PROJECT_ID`/
+  `RECAPTCHA_API_KEY` sin configurar en `.env`) nunca bloquea por sí solo, para no convertir "quitar
+  la barrera de cuenta" en "agregar una barrera de Google" para alguien real. La site key es pública
+  y vive hardcodeada en el frontend (`index.html` + `utils/recaptcha.ts`); el project ID y el API
+  key son privados, solo en `.env` del backend.
+
+Otros endpoints, todos con `requireAuth` (a propósito — publicar/confirmar es lo que se abrió,
+actuar sobre el reporte de otro de cualquier otra forma sigue pidiendo cuenta):
 - `POST /:id/flag` — denuncia con motivo, marca el reporte para revisión de moderadores.
 - `POST /:id/update` — actualización rápida de texto ("Sigue activo", "Se agotaron los
   suministros"...); si `deactivates: true`, pone el reporte en `status: inactive`.
@@ -479,16 +514,19 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
 
 ```
 frontend/src/
-  main.tsx                — entry point: BrowserRouter > AuthProvider > App
+  main.tsx                — entry point: BrowserRouter > AuthProvider > GuestContactProvider > App
   App.tsx                 — layout raíz: Navbar + Routes + Footer
   api/client.ts             — único punto de fetch al backend — ver 6.1
-  context/AuthContext.tsx    — estado de sesión global (profile, login/register/logout)
+  context/
+    AuthContext.tsx          — estado de sesión global (profile, login/register/logout)
+    GuestContactContext.tsx   — nombre/correo/celular de invitado recordado en memoria para la sesión, ver 6.11
   types.ts                 — tipos compartidos (Report, Profile, Category, ...)
   pages/                  — una por ruta, ver 6.2
   components/
     Navbar.tsx              — logo + nav responsive (hamburguesa en móvil)
     Footer.tsx               — nota de proyecto sin fines de lucro
-    GuestContactFields.tsx    — inputs de email/celular reusados en NeedHelpPage y ReportFormPage
+    GuestContactFields.tsx    — inputs de nombre/correo/celular, reusados en NeedHelpPage/ReportFormPage/GuestConfirmModal
+    GuestConfirmModal.tsx     — modal compartido por HomePage y ReportDetailPage para confirmar sin cuenta, ver 6.11
     LocationSelector.tsx      — GPS/catálogo/manual + mapa embebido de un pin, ver 6.8
     MapView.tsx               — mapa Leaflet con markers por categoría, centra con fitBounds (ver 6.8)
     ReportCard.tsx            — tarjeta de reporte en listados
@@ -498,7 +536,9 @@ frontend/src/
     categoryStyle.ts           — GROUP_META: color/label/badge por CategoryGroup (única fuente de verdad de estilo por categoría)
     needStatusStyle.ts          — NEED_STATUS_META: emoji/badge/color de marcador por NeedStatus (Fase 1) — el texto sigue viniendo del backend (needStatusLabel)
   data/colombiaLocations.ts   — catálogo departamento→municipios de Colombia, ver 6.8
-  utils/time.ts              — relativeTime() ("hace 5 min")
+  utils/
+    time.ts                  — relativeTime() ("hace 5 min")
+    recaptcha.ts              — getRecaptchaToken(action), envuelve grecaptcha.enterprise, ver 6.11
   styles/index.css            — Tailwind + estilos globales (incluye .map-tag para las etiquetas del mapa)
 ```
 
@@ -534,6 +574,13 @@ hacían (mostraban solo un botón "Inicia sesión"), eso se quitó a propósito.
 - Si hay `profile`, el submit no manda `email`/`phone` (el backend usa `req.user.id`).
 - Si no hay `profile`, se renderiza `<GuestContactFields>` (email + celular, ambos requeridos
   client-side antes de permitir el submit) y esos valores se mandan al backend.
+
+`GuestContactFields.tsx` se reusa también dentro de `GuestConfirmModal.tsx` para confirmar sin
+cuenta (ver 6.11 más abajo) — ganó props opcionales `displayName`/`setDisplayName` (solo se
+renderiza el campo "Nombre" si vienen), `phoneRequired` (default `true`, sin cambiar el
+comportamiento de los formularios de arriba — el modal lo pasa en `false`), `compact` (oculta el
+encabezado "Publicando sin cuenta..." cuando el que lo usa ya tiene su propio texto, como el
+modal) y `honeypot` (campo anti-spam, ver 4.2).
 
 En `ReportFormPage`, el botón "CONFIRMAR EXISTENTE" sobre reportes cercanos duplicados solo llama
 `confirmReport` (requiere auth) si hay `profile`; si no, el botón se relee como "VER REPORTE" y solo
@@ -610,8 +657,10 @@ dos inputs opcionales de cantidad+unidad junto al resto del formulario, mandados
 `api.createReport()` solo si se llenó cantidad. `ReportDetailPage.tsx` tiene una sección "Estado de
 la necesidad" (visible solo si `report.category.group === "necesidad"`) con un botón directo
 "✅ Ya está cubierto — no traer más" y un formulario genérico (select de los 6 estados + cantidad
-recibida) que llaman `api.updateNeedStatus()`; ambos pasan por el mismo `guardedAction` que ya usan
-confirmar/denunciar (redirige a `/login` si no hay sesión). `ReportCard.tsx` y el `Popup` de
+recibida) que llaman `api.updateNeedStatus()`; ambos pasan por `guardedAction` (redirige a
+`/login` si no hay sesión) — a diferencia de confirmar (ver 6.11 más abajo), marcar el estado de
+una necesidad **sigue** pidiendo cuenta, no se abrió con este cambio. `ReportCard.tsx` y el `Popup`
+de
 `MapView.tsx` muestran el mismo badge de estado; `MapView.tsx` además cambia el **color del
 marcador** a verde/azul cuando `needStatus` es `cubierto`/`excedente` — eso es lo que evita que
 alguien lleve ayuda a un punto ya resuelto sin tener que abrir el popup para enterarse.
@@ -695,13 +744,54 @@ confirmar/denunciar/actualizar.
 **Banners de CTA tras una transición de estado** — ambos capturan el estado *antes* del `await` para
 detectar si la acción fue la que causó la transición (y no mostrar el banner si el reporte ya estaba
 en ese estado):
-- `confirmReportAndOfferShare()`: si `trustLevel` pasa a `confirmado`/`institucional` por primera
-  vez, banner "Este reporte ya está confirmado por la comunidad." → "Compartir con mi comunidad".
+- `confirmAsGuestOrUser("confirm")` (ver 6.11 — el nombre de la función cambió cuando confirmar
+  dejó de requerir cuenta, ya no es solo "confirm and offer share"): si `trustLevel` pasa a
+  `confirmado`/`institucional` por primera vez, banner "Este reporte ya está confirmado por la
+  comunidad." → "Compartir con mi comunidad".
 - `markCoveredAndOfferShare()`: si `needStatus` pasa a `cubierto` por primera vez, banner "¡Gracias
   por actualizar!" → "Compartir actualización por WhatsApp".
 
 Ambos banners abren el mismo `<ShareSheet>` montado al final del componente — no hace falta pasarle
 una variante, el backend recalcula `status` sobre el reporte ya actualizado.
+
+### 6.11 Confirmar sin cuenta (frontend)
+
+**Dos puntos de entrada, un solo flujo compartido.** El botón "CONFIRMAR" existe en dos lugares
+independientes — la tarjeta de cada reporte en la lista del home (`ReportCard.tsx`, vía el
+`onConfirm` que le pasa `HomePage.tsx`) y los tres botones de `ReportDetailPage.tsx`
+(CONFIRMAR/NO ESTOY SEGURO/REPORTAR INCORRECTO) — y los dos tenían que dejar de pedir cuenta a la
+vez; arreglar solo uno deja al otro silenciosamente redirigiendo a `/login` (bug real detectado
+después de un primer intento que solo tocó `ReportDetailPage.tsx`).
+
+**`GuestContactContext`** (`frontend/src/context/GuestContactContext.tsx`, montado en `main.tsx`
+junto a `AuthProvider`) guarda `{ displayName, email?, phone? } | null` **en memoria, nunca
+persistido** (mismo criterio que el access token en `api/client.ts`) — se pide una sola vez por
+visita/pestaña: quien confirma varios reportes seguidos (en el home o en detalle, da igual) no
+vuelve a escribir su nombre/contacto cada vez.
+
+**`GuestConfirmModal.tsx`** — modal compartido por ambas páginas. Se abre solo cuando `!profile &&
+!guestContact`; si ya hay `guestContact` guardado, ninguna página vuelve a mostrar nada, confirma
+directo. Copy explícito: *"Solo tu nombre y tu correo o celular — no creamos ninguna cuenta ni
+contraseña"* — respuesta directa a que esto **no** debe sentirse como un registro. Pide nombre +
+(correo **o** celular, no ambos — el propio modal valida "al menos uno" antes de permitir enviar,
+mismo criterio que el backend). Al enviar: `rememberGuestContact()` guarda el contacto en el
+contexto (para no volver a preguntar) y ejecuta la acción que estaba pendiente
+(`pendingConfirmType`/`pendingConfirmId` según la página).
+
+En ambas páginas, cada botón llama una única función (`confirmAsGuestOrUser(type)` en
+`ReportDetailPage.tsx`, `handleConfirm(id)` en `HomePage.tsx`) que **nunca pasa por
+`guardedAction`** (ese helper redirige a `/login`, exactamente la barrera que se quitó): con
+`profile`, confirma directo; sin `profile` pero con `guestContact` ya guardado, confirma directo
+con esos datos; sin ninguno de los dos, abre `GuestConfirmModal`.
+
+`frontend/src/utils/recaptcha.ts#getRecaptchaToken(action)` envuelve
+`grecaptcha.enterprise.execute()` en una promesa que resuelve a `null` (nunca rechaza) si el script
+no cargó — se pide el token solo cuando se confirma como invitado, y se manda tal cual (aunque sea
+`null`) al backend, que decide si bloquea o no (ver 4.2, `requireRecaptchaForGuests`: un token
+ausente nunca bloquea por sí solo). En local, el badge de reCAPTCHA muestra "Localhost is not
+supported by this site key" — normal y esperado, la site key está registrada para los dominios de
+producción, no para desarrollo; el flujo sigue funcionando igual porque el backend no exige el
+token, solo lo verifica si llegó.
 
 ## 7. Flujos de punta a punta
 
@@ -716,9 +806,10 @@ como guest + una password → `registerUser` detecta `isGuest: true` en el `User
 agrega password y pone `isGuest: false` → mismo `User.id`, sus reportes y reputación previos ya
 están ahí, no hay migración de datos que hacer.
 
-**Confirmar un reporte:** requiere sesión (login o cuenta reclamada). `POST /:id/confirm` →
-`recomputeReportTrustScore` recalcula el score con el nuevo dato → si es `type: confirm`,
-`rewardUsefulConfirmation` sube reputación de quien confirma y de quien creó el reporte.
+**Confirmar un reporte:** con sesión o sin ella (ver 4.2 "Confirmar sin cuenta" — sin sesión, nombre
++ correo resuelven una identidad guest vía `resolveGuestContact`, igual que publicar). `POST
+/:id/confirm` → `recomputeReportTrustScore` recalcula el score con el nuevo dato → si es `type:
+confirm`, `rewardUsefulConfirmation` sube reputación de quien confirma y de quien creó el reporte.
 
 **Un reporte decae solo:** nadie necesita correr un cron — cada vez que se **lee** un reporte
 (`serializeReport`), `applyDecay` calcula cuánto restar según horas desde `lastConfirmedAt`. El
@@ -808,10 +899,14 @@ migraciones; el admin real se crea aparte con password generada.
   de reputación, confirmaciones y auditoría sigue funcionando sin tocar ni un solo otro módulo.
 - **El decay de confianza nunca se persiste**, se calcula al leer. Evita necesitar un job
   programado corriendo contra toda la tabla `Report` solo para mantener los números actualizados.
-- **Confirmar/denunciar/actualizar siguen pidiendo cuenta** aunque *publicar* ya no la pida — es
-  una decisión consciente, no un descuido: publicar es la acción que no se puede permitir perder
-  (alguien pidiendo ayuda en emergencia), mientras que actuar sobre el reporte de otro es una
-  acción secundaria donde mantener la barra de confianza más alta tiene más sentido.
+- **Confirmar tampoco pide cuenta desde hace poco — denunciar/actualizar/estado de necesidad sí
+  siguen pidiéndola.** El corte no es "publicar vs. todo lo demás": confirmar es la acción de
+  verificación más frecuente y de menor riesgo (solo suma un voto más, con el mismo límite de "una
+  vez por tipo por reporte" que ya existía), así que se le aplicó el mismo criterio que a publicar
+  — no perder a alguien real por pedirle una cuenta — reforzado con honeypot + rate limit propio +
+  reCAPTCHA en vez de la barrera de auth. Denunciar/actualizar/marcar estado de necesidad son
+  acciones con más impacto por intento (ocultar un reporte real, cambiar su estado visible) y
+  siguen detrás de `requireAuth` a propósito.
 - **Un guest se resuelve por email, y un email que ya es cuenta real bloquea el guest-flow (409).**
   Sin esto, cualquiera podría publicar reportes "como" otra persona con solo escribir su correo —
   la reputación de esa persona quedaría manipulable por terceros.

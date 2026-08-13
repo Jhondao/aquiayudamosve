@@ -57,6 +57,13 @@
     <script async src="https://www.googletagmanager.com/gtag/js?id=G-LEY8L16ZSD"></script>
     <script src="/gtag-init.js"></script>
 
+    <!-- reCAPTCHA Enterprise — anti-spam para acciones comunitarias sin
+         cuenta (confirmar un reporte, ver frontend/src/utils/recaptcha.ts).
+         render=<site key> precarga el motor v3-style (sin badge visible
+         propio; el badge estándar de Google queda visible por sus términos
+         de uso). La site key es pública por diseño, segura de embeber aquí. -->
+    <script async src="https://www.google.com/recaptcha/enterprise.js?render=6LcZRoQtAAAAAKGog-5O9WHEHo-9RpZ5A3bYl6qr"></script>
+
     <!-- WebSite/Organization: seguro para toda la home porque describe el
          sitio en sí, no un reporte individual (nunca Article/Event por
          reporte — ver .claude/agents/seo-specialist.md, el contenido de un

@@ -113,18 +113,26 @@ async function loadReport(id: string) {
 /**
  * Publishing without a session is allowed (community-first: no signup wall
  * to ask for help or report). We still need a stable identity to attach the
- * report to for the trust/reputation system, so an email+phone pair either
- * reuses or creates a passwordless "guest" User. If the email already
- * belongs to a real account, we refuse — otherwise anyone could post under
- * someone else's identity just by typing their email.
+ * action to for the trust/reputation system, so an email either reuses or
+ * creates a passwordless "guest" User. If the email already belongs to a
+ * real account, we refuse — otherwise anyone could act under someone else's
+ * identity just by typing their email.
+ *
+ * `phone`/`displayName` are optional: report creation always passes both
+ * (its own schema requires them together), but confirming a report without
+ * an account only requires a name + email — phone is a nice-to-have there,
+ * not an identity requirement. `displayName` only applies when the guest
+ * User is created for the first time; reusing an existing guest identity
+ * never overwrites the name it already has (a later confirm action isn't
+ * license to rename someone's earlier report identity).
  */
-async function resolveGuestContact(email: string, phone: string) {
+async function resolveGuestContact(email: string, phone?: string, displayName?: string) {
   const existing = await prisma.user.findUnique({ where: { email } });
   if (existing) {
     if (!existing.isGuest) {
-      throw new HttpError(409, "Ese correo ya tiene una cuenta. Inicia sesión para publicar con ella.");
+      throw new HttpError(409, "Ese correo ya tiene una cuenta. Inicia sesión para continuar.");
     }
-    if (existing.phone !== phone) {
+    if (phone && existing.phone !== phone) {
       await prisma.user.update({ where: { id: existing.id }, data: { phone } });
     }
     return existing.id;
@@ -133,13 +141,25 @@ async function resolveGuestContact(email: string, phone: string) {
   const created = await prisma.user.create({
     data: {
       email,
-      phone,
+      phone: phone ?? null,
       isGuest: true,
-      displayName: email.split("@")[0],
+      displayName: displayName?.trim() || email.split("@")[0],
       reputation: { create: { score: 0, level: "nuevo" } },
     },
   });
   return created.id;
+}
+
+// `User.email` es NOT NULL + @unique — un guest que solo da celular (sin
+// correo, ver confirmReport) igual necesita una fila con un email real para
+// esa columna. Se sintetiza uno determinístico a partir del celular, nunca
+// mostrado en la UI, solo para satisfacer la restricción del modelo de
+// datos. Dos confirmaciones con el mismo celular terminan bajo la misma
+// identidad guest a propósito — mismo criterio que ya aplica hoy por correo
+// repetido.
+function syntheticEmailForPhone(phone: string): string {
+  const digits = phone.replace(/[^0-9]/g, "");
+  return `tel-${digits}@guest.aquiayudamosve.local`;
 }
 
 export async function createReport(
@@ -276,7 +296,28 @@ export async function findNearbyReports(params: { lat: number; lng: number; radi
     .map((r) => serializeReport(r));
 }
 
-export async function confirmReport(reportId: string, userId: string, type: "confirm" | "unsure" | "incorrect") {
+/**
+ * Confirmar/dudoso/incorrecto no requiere cuenta — mismo criterio
+ * "comunitario, sin barrera" que ya aplica a publicar (ver
+ * resolveGuestContact arriba). Sin `actor.userId`, hace falta correo **o**
+ * celular (no ambos — a diferencia de publicar) más nombre; el guard vive
+ * aquí, no en el schema, mismo motivo que el resto de los .optional() de
+ * este archivo. Sin correo, se resuelve con syntheticEmailForPhone.
+ */
+export async function confirmReport(
+  reportId: string,
+  actor: { userId?: string; email?: string; phone?: string; displayName?: string },
+  type: "confirm" | "unsure" | "incorrect"
+) {
+  let userId = actor.userId;
+  if (!userId) {
+    if (!actor.email && !actor.phone) {
+      throw new HttpError(400, "Agrega tu nombre y tu correo o celular para confirmar sin cuenta.");
+    }
+    const email = actor.email ?? syntheticEmailForPhone(actor.phone!);
+    userId = await resolveGuestContact(email, actor.phone, actor.displayName);
+  }
+
   const report = await loadReport(reportId);
 
   try {
