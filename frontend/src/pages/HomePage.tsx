@@ -86,6 +86,7 @@ export default function HomePage() {
     const counts = new Map<string, { label: string; count: number }>();
     for (const r of allReports) {
       if (r.category.group !== "necesidad") continue;
+      if (r.needStatus === "cubierto" || r.needStatus === "excedente") continue; // ya no urge
       const entry = counts.get(r.category.key) ?? { label: r.category.label, count: 0 };
       entry.count += 1;
       counts.set(r.category.key, entry);

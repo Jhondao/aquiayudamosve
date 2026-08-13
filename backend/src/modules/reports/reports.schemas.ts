@@ -19,6 +19,10 @@ export const createReportSchema = z.object({
   approxLocationText: z.string().trim().min(2).max(200),
   lat: z.number().gte(-90).lte(90),
   lng: z.number().gte(-180).lte(180),
+  // Only applied when categoryKey belongs to group "necesidad" (reports.service.ts#createReport)
+  // — ignored silently otherwise, same pattern as isSensitive/coarsening.
+  quantityNeeded: z.number().positive().max(1_000_000).optional(),
+  quantityUnit: z.string().trim().min(1).max(20).optional(),
   // Only required when publishing without a session — see reports.routes.ts.
   email: z.string().trim().toLowerCase().email().optional(),
   phone: z
@@ -44,6 +48,34 @@ export const flagSchema = z.object({
 export const updateSchema = z.object({
   text: z.string().trim().min(2).max(300),
   deactivates: z.boolean().optional(),
+});
+
+// Fase 1 del PROMPT MAESTRO — "estado ampliado de necesidades". Sin
+// .refine(): validateBody() está tipado como AnyZodObject, y .refine()
+// devuelve ZodEffects (no compila). El guard "al menos un campo" vive en
+// reports.service.ts#updateNeedStatus.
+export const NEED_STATUS_VALUES = [
+  "necesitamos",
+  "en_camino",
+  "parcialmente_cubierto",
+  "cubierto",
+  "excedente",
+  "desactualizado",
+] as const;
+export type NeedStatusValue = (typeof NEED_STATUS_VALUES)[number];
+
+export const needStatusLabels: Record<NeedStatusValue, string> = {
+  necesitamos: "Necesitamos",
+  en_camino: "Ayuda en camino",
+  parcialmente_cubierto: "Parcialmente cubierto",
+  cubierto: "Cubierto — no traer más",
+  excedente: "Excedente",
+  desactualizado: "Desactualizado",
+};
+
+export const needStatusSchema = z.object({
+  needStatus: z.enum(NEED_STATUS_VALUES).optional(),
+  quantityReceived: z.number().min(0).max(1_000_000).optional(),
 });
 
 export const listQuerySchema = z.object({

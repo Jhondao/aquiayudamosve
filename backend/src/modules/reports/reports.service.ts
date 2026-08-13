@@ -4,7 +4,7 @@ import { HttpError } from "../../middleware/errorHandler";
 import { coarsenCoordinates, haversineMeters } from "../../utils/geo";
 import { applyDecay, determineTrustLevel, recomputeReportTrustScore, trustLevelCopy } from "../trust/trustScore.service";
 import { rewardUsefulConfirmation } from "../trust/reputation.service";
-import { SENSITIVE_CATEGORY_KEYS } from "./reports.schemas";
+import { SENSITIVE_CATEGORY_KEYS, needStatusLabels, type NeedStatusValue } from "./reports.schemas";
 import { broadcastPush } from "../../lib/push";
 
 const reportWithRelations = Prisma.validator<Prisma.ReportDefaultArgs>()({
@@ -41,6 +41,15 @@ export function serializeReport(report: ReportWithRelations) {
     lat: report.lat,
     lng: report.lng,
     isSensitive: report.isSensitive,
+    // Fase 1 del PROMPT MAESTRO — solo no-null cuando category.group es
+    // "necesidad". quantityPending se calcula al leer, no se persiste
+    // (mismo patrón que applyDecay más abajo).
+    needStatus: report.needStatus,
+    needStatusLabel: report.needStatus ? needStatusLabels[report.needStatus as NeedStatusValue] : null,
+    quantityNeeded: report.quantityNeeded,
+    quantityUnit: report.quantityUnit,
+    quantityReceived: report.quantityReceived,
+    quantityPending: report.quantityNeeded != null ? Math.max(0, report.quantityNeeded - report.quantityReceived) : null,
     status: report.status,
     category: {
       key: report.category.key,
@@ -114,7 +123,17 @@ async function resolveGuestContact(email: string, phone: string) {
 
 export async function createReport(
   actor: { userId?: string; email?: string; phone?: string },
-  input: { categoryKey: string; title: string; description: string; city: string; approxLocationText: string; lat: number; lng: number }
+  input: {
+    categoryKey: string;
+    title: string;
+    description: string;
+    city: string;
+    approxLocationText: string;
+    lat: number;
+    lng: number;
+    quantityNeeded?: number;
+    quantityUnit?: string;
+  }
 ) {
   let userId = actor.userId;
   if (!userId) {
@@ -129,6 +148,7 @@ export async function createReport(
 
   const isSensitive = SENSITIVE_CATEGORY_KEYS.has(input.categoryKey);
   const coords = isSensitive ? coarsenCoordinates(input.lat, input.lng) : { lat: input.lat, lng: input.lng };
+  const isNecesidad = category.group === "necesidad";
 
   const report = await prisma.report.create({
     data: {
@@ -143,6 +163,9 @@ export async function createReport(
       createdById: userId,
       trustScore: 20,
       lastConfirmedAt: new Date(),
+      needStatus: isNecesidad ? "necesitamos" : null,
+      quantityNeeded: isNecesidad ? input.quantityNeeded ?? null : null,
+      quantityUnit: isNecesidad ? input.quantityUnit ?? null : null,
     },
     ...reportWithRelations,
   });
@@ -243,6 +266,48 @@ export async function addReportUpdate(reportId: string, userId: string, text: st
   if (deactivates) {
     await prisma.report.update({ where: { id: reportId }, data: { status: "inactive" } });
   }
+  return getReport(reportId);
+}
+
+/**
+ * Fase 1 del PROMPT MAESTRO. Abierta a cualquier usuario logueado, no solo
+ * al creador — mismo modelo comunitario que confirm/flag/update ya usan
+ * (reclamar un punto es una fase posterior, sección 22 del documento).
+ * También toca lastConfirmedAt: si no lo hiciera, un punto que la comunidad
+ * sí mantiene activamente decaería igual que uno abandonado, reintroduciendo
+ * por otra puerta el problema que esta fase busca resolver.
+ */
+export async function updateNeedStatus(
+  reportId: string,
+  userId: string,
+  input: { needStatus?: NeedStatusValue; quantityReceived?: number }
+) {
+  if (input.needStatus === undefined && input.quantityReceived === undefined) {
+    throw new HttpError(400, "Indica un estado o una cantidad recibida.");
+  }
+  const report = await loadReport(reportId);
+  if (report.category.group !== "necesidad") {
+    throw new HttpError(400, "Este reporte no es una necesidad.");
+  }
+
+  const parts: string[] = [];
+  if (input.needStatus) parts.push(`Estado actualizado a "${needStatusLabels[input.needStatus]}".`);
+  if (input.quantityReceived !== undefined) {
+    const unit = report.quantityUnit ?? "";
+    const needed = report.quantityNeeded != null ? ` de ${report.quantityNeeded}${unit}` : "";
+    parts.push(`Recibidos ${input.quantityReceived}${unit}${needed}.`);
+  }
+
+  await prisma.report.update({
+    where: { id: reportId },
+    data: {
+      ...(input.needStatus ? { needStatus: input.needStatus } : {}),
+      ...(input.quantityReceived !== undefined ? { quantityReceived: input.quantityReceived } : {}),
+      lastConfirmedAt: new Date(),
+    },
+  });
+  await prisma.reportUpdate.create({ data: { reportId, userId, text: parts.join(" "), deactivates: false } });
+
   return getReport(reportId);
 }
 

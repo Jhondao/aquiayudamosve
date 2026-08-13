@@ -3,9 +3,10 @@ import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
 import { GROUP_META } from "../components/categoryStyle";
+import { NEED_STATUS_META } from "../components/needStatusStyle";
 import { TrustBadge } from "../components/TrustBadge";
 import { relativeTime } from "../utils/time";
-import type { Report } from "../types";
+import type { NeedStatus, Report } from "../types";
 
 const QUICK_UPDATES: { label: string; deactivates?: boolean }[] = [
   { label: "Sigue activo" },
@@ -14,6 +15,15 @@ const QUICK_UPDATES: { label: string; deactivates?: boolean }[] = [
   { label: "Se agotaron los suministros" },
   { label: "La vía continúa bloqueada" },
   { label: "La información parece incorrecta" },
+];
+
+const NEED_STATUS_OPTIONS: { value: NeedStatus; label: string }[] = [
+  { value: "necesitamos", label: "Necesitamos" },
+  { value: "en_camino", label: "Ayuda en camino" },
+  { value: "parcialmente_cubierto", label: "Parcialmente cubierto" },
+  { value: "cubierto", label: "Cubierto — no traer más" },
+  { value: "excedente", label: "Excedente" },
+  { value: "desactualizado", label: "Desactualizado" },
 ];
 
 export default function ReportDetailPage() {
@@ -25,6 +35,8 @@ export default function ReportDetailPage() {
   const [notice, setNotice] = useState<string | null>(null);
   const [sourceUrl, setSourceUrl] = useState("");
   const [photo, setPhoto] = useState<File | null>(null);
+  const [needStatusInput, setNeedStatusInput] = useState<NeedStatus>("necesitamos");
+  const [quantityReceivedInput, setQuantityReceivedInput] = useState(0);
 
   async function load() {
     if (!id) return;
@@ -34,6 +46,12 @@ export default function ReportDetailPage() {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar el reporte.");
     }
   }
+
+  useEffect(() => {
+    if (report?.needStatus) setNeedStatusInput(report.needStatus);
+    if (report) setQuantityReceivedInput(report.quantityReceived);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [report?.id]);
 
   useEffect(() => {
     load();
@@ -143,6 +161,67 @@ export default function ReportDetailPage() {
           REPORTAR INCORRECTO
         </button>
       </div>
+
+      {report.category.group === "necesidad" && (
+        <div className="mt-4 rounded-2xl border border-border bg-surface p-4">
+          <h2 className="text-xs font-bold uppercase tracking-wide text-slate-400">Estado de la necesidad</h2>
+          {report.needStatus && (
+            <div
+              className={`mt-2 inline-flex w-fit items-center gap-1 rounded-lg px-2.5 py-1.5 text-xs font-bold ${NEED_STATUS_META[report.needStatus].badgeClass}`}
+            >
+              {NEED_STATUS_META[report.needStatus].emoji} {report.needStatusLabel?.toUpperCase()}
+              {report.quantityNeeded != null &&
+                ` — ${report.quantityReceived}/${report.quantityNeeded} ${report.quantityUnit ?? ""}`}
+            </div>
+          )}
+
+          <button
+            onClick={() =>
+              guardedAction(async () => setReport(await api.updateNeedStatus(report.id, { needStatus: "cubierto" })))
+            }
+            className="mt-3 block w-full rounded-xl bg-safe px-4 py-2.5 text-sm font-bold text-white"
+          >
+            ✅ Ya está cubierto — no traer más
+          </button>
+
+          <div className="mt-3 flex flex-col gap-2 sm:flex-row">
+            <select
+              value={needStatusInput}
+              onChange={(e) => setNeedStatusInput(e.target.value as NeedStatus)}
+              className="h-11 rounded-xl border border-border bg-surface2 px-3 text-sm"
+            >
+              {NEED_STATUS_OPTIONS.map((o) => (
+                <option key={o.value} value={o.value}>
+                  {o.label}
+                </option>
+              ))}
+            </select>
+            <input
+              type="number"
+              min="0"
+              value={quantityReceivedInput}
+              onChange={(e) => setQuantityReceivedInput(Number(e.target.value))}
+              placeholder="Cantidad recibida"
+              className="h-11 w-full rounded-xl border border-border bg-surface2 px-3 text-sm sm:w-40"
+            />
+            <button
+              onClick={() =>
+                guardedAction(async () =>
+                  setReport(
+                    await api.updateNeedStatus(report.id, {
+                      needStatus: needStatusInput,
+                      quantityReceived: quantityReceivedInput,
+                    })
+                  )
+                )
+              }
+              className="h-11 rounded-xl border border-border px-4 text-sm font-semibold"
+            >
+              Actualizar estado
+            </button>
+          </div>
+        </div>
+      )}
 
       <h2 className="mt-6 text-xs font-bold uppercase tracking-wide text-slate-400">Actualizaciones rápidas</h2>
       <div className="mt-2 flex flex-wrap gap-2">

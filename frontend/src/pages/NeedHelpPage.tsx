@@ -28,6 +28,8 @@ export default function NeedHelpPage() {
   const [submitted, setSubmitted] = useState(false);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [quantityNeeded, setQuantityNeeded] = useState("");
+  const [quantityUnit, setQuantityUnit] = useState("");
 
   useEffect(() => {
     api.getCategories().then((res) => setCategories(res.categories.filter((c) => c.group === "necesidad")));
@@ -56,6 +58,7 @@ export default function NeedHelpPage() {
         approxLocationText: "Ubicación no especificada",
         lat: CITY_CENTER[city][0],
         lng: CITY_CENTER[city][1],
+        ...(quantityNeeded.trim() ? { quantityNeeded: Number(quantityNeeded), quantityUnit: quantityUnit.trim() || undefined } : {}),
         ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
       });
       setSubmitted(true);
@@ -113,6 +116,29 @@ export default function NeedHelpPage() {
         placeholder="Ej: familia de 4 personas sin agua desde ayer"
         className="mt-1 min-h-[90px] w-full rounded-xl border border-border bg-surface px-3 py-2 text-sm"
       />
+
+      <div className="mt-4 flex gap-2">
+        <div className="flex-1">
+          <label className="block text-xs font-semibold text-slate-400">Cantidad necesaria (opcional)</label>
+          <input
+            type="number"
+            min="0"
+            value={quantityNeeded}
+            onChange={(e) => setQuantityNeeded(e.target.value)}
+            placeholder="Ej: 500"
+            className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
+          />
+        </div>
+        <div className="w-28">
+          <label className="block text-xs font-semibold text-slate-400">Unidad</label>
+          <input
+            value={quantityUnit}
+            onChange={(e) => setQuantityUnit(e.target.value)}
+            placeholder="L, kg…"
+            className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
+          />
+        </div>
+      </div>
 
       {!profile && <GuestContactFields email={email} setEmail={setEmail} phone={phone} setPhone={setPhone} />}
 

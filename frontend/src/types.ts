@@ -8,6 +8,14 @@ export type TrustLevel =
   | "desactualizada"
   | "cuestionada";
 
+export type NeedStatus =
+  | "necesitamos"
+  | "en_camino"
+  | "parcialmente_cubierto"
+  | "cubierto"
+  | "excedente"
+  | "desactualizado";
+
 export interface Category {
   id: string;
   group: CategoryGroup;
@@ -39,6 +47,12 @@ export interface Report {
   lat: number;
   lng: number;
   isSensitive: boolean;
+  needStatus: NeedStatus | null;
+  needStatusLabel: string | null;
+  quantityNeeded: number | null;
+  quantityUnit: string | null;
+  quantityReceived: number;
+  quantityPending: number | null;
   status: "active" | "inactive" | "hidden";
   category: { key: string; label: string; group: CategoryGroup };
   organization: { name: string; verified: boolean } | null;

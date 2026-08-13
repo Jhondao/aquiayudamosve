@@ -44,6 +44,15 @@ enum ConfirmationType {
   incorrect
 }
 
+enum NeedStatus {
+  necesitamos
+  en_camino
+  parcialmente_cubierto
+  cubierto
+  excedente
+  desactualizado
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
@@ -139,6 +148,15 @@ model Report {
   createdById        String
   organizationId     String?
   isSensitive        Boolean      @default(false)
+  // Fase 1 del PROMPT MAESTRO — solo relevantes cuando category.group es
+  // "necesidad" (NULL para el resto, igual que isSensitive con sus 3
+  // categoryKey de docenas). Sin @default en needStatus: el service decide
+  // el valor explícitamente por categoría, un DEFAULT de columna lo
+  // filtraría a todo Report.create() que no lo mande.
+  needStatus         NeedStatus?
+  quantityNeeded     Float?
+  quantityUnit       String?
+  quantityReceived   Float        @default(0)
   createdAt          DateTime     @default(now())
   updatedAt          DateTime     @updatedAt
   lastConfirmedAt    DateTime     @default(now())

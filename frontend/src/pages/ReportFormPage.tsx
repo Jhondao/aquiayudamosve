@@ -33,6 +33,8 @@ export default function ReportFormPage() {
   const [submitting, setSubmitting] = useState(false);
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
+  const [quantityNeeded, setQuantityNeeded] = useState("");
+  const [quantityUnit, setQuantityUnit] = useState("");
 
   useEffect(() => {
     api.getCategories().then((res) => setCategories(res.categories));
@@ -82,6 +84,9 @@ export default function ReportFormPage() {
         approxLocationText: locationText,
         lat,
         lng,
+        ...(group === "necesidad" && quantityNeeded.trim()
+          ? { quantityNeeded: Number(quantityNeeded), quantityUnit: quantityUnit.trim() || undefined }
+          : {}),
         ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
       });
       navigate(`/reporte/${report.id}`);
@@ -139,6 +144,31 @@ export default function ReportFormPage() {
         <div className="mt-3 rounded-xl border border-danger px-3 py-2 text-xs text-danger">
           Esta categoría puede involucrar personas vulnerables. Evita incluir nombres, edades exactas o direcciones muy
           precisas — reduciremos la precisión de la ubicación automáticamente.
+        </div>
+      )}
+
+      {group === "necesidad" && (
+        <div className="mt-4 flex gap-2">
+          <div className="flex-1">
+            <label className="block text-xs font-semibold text-slate-400">Cantidad necesaria (opcional)</label>
+            <input
+              type="number"
+              min="0"
+              value={quantityNeeded}
+              onChange={(e) => setQuantityNeeded(e.target.value)}
+              placeholder="Ej: 500"
+              className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
+            />
+          </div>
+          <div className="w-28">
+            <label className="block text-xs font-semibold text-slate-400">Unidad</label>
+            <input
+              value={quantityUnit}
+              onChange={(e) => setQuantityUnit(e.target.value)}
+              placeholder="L, kg…"
+              className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
+            />
+          </div>
         </div>
       )}
 

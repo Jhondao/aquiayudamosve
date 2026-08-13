@@ -12,6 +12,7 @@ import {
   flagReport,
   getReport,
   listReports,
+  updateNeedStatus,
 } from "./reports.service";
 import {
   confirmSchema,
@@ -19,6 +20,7 @@ import {
   flagSchema,
   listQuerySchema,
   nearbyQuerySchema,
+  needStatusSchema,
   updateSchema,
 } from "./reports.schemas";
 import { persistEvidenceImage, uploadEvidenceImage } from "./uploads";
@@ -79,6 +81,16 @@ router.post("/:id/flag", requireAuth, confirmationLimiter, validateBody(flagSche
 router.post("/:id/update", requireAuth, confirmationLimiter, validateBody(updateSchema), async (req, res, next) => {
   try {
     res.json(await addReportUpdate(req.params.id, req.user!.id, req.body.text, req.body.deactivates));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Fase 1 del PROMPT MAESTRO — mismo nivel de acceso que confirm/flag/update
+// (comunitario, no restringido al creador del reporte).
+router.post("/:id/need-status", requireAuth, confirmationLimiter, validateBody(needStatusSchema), async (req, res, next) => {
+  try {
+    res.json(await updateNeedStatus(req.params.id, req.user!.id, req.body));
   } catch (err) {
     next(err);
   }
