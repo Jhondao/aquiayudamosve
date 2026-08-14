@@ -18,6 +18,8 @@ import shareGatewayRoutes from "./modules/share/shareGateway.routes";
 import petsRoutes from "./modules/pets/pets.routes";
 import petModerationRoutes from "./modules/pets/petModeration.routes";
 import petShareGatewayRoutes from "./modules/pets/petShareGateway.routes";
+import petResourcesRoutes from "./modules/pets/petResources.routes";
+import petResourceModerationRoutes from "./modules/pets/petResourceModeration.routes";
 
 export function createApp() {
   const app = express();
@@ -73,6 +75,14 @@ export function createApp() {
   app.use("/api/organizations", organizationsRoutes);
   app.use("/api/users", usersRoutes);
   app.use("/api/push", pushRoutes);
+  app.use("/api/admin/pet-resources", petResourceModerationRoutes);
+  // /api/pets/resources montado ANTES de /api/pets a propósito: Express
+  // prueba los app.use() en orden de registro, y /api/pets ya matchea
+  // cualquier ruta que empiece por ese prefijo — sin este orden, GET
+  // /api/pets/resources caería dentro de petsRoutes' GET /:id (tratando
+  // "resources" como un id) antes de llegar nunca a este router. Mismo
+  // criterio que /r/mascota antes de /r más abajo.
+  app.use("/api/pets/resources", petResourcesRoutes);
   app.use("/api/pets", petsRoutes);
 
   // Fuera de /api a propósito: responde HTML (puerta social con OG tags),
