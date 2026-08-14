@@ -7,11 +7,14 @@ import type {
   PetReportType,
   PetShareCard,
   PetSex,
+  PetSighting,
   PetSize,
   PetSpecies,
   PetStatus,
+  PossibleMatch,
   Profile,
   Report,
+  RevealedPetContact,
   ShareCard,
   ShareChannel,
 } from "../types";
@@ -301,6 +304,25 @@ export const api = {
   getPetShareCard: (id: string) => request<PetShareCard>(`/api/pets/${id}/share-card`),
   recordPetShareEvent: (id: string, channel: ShareChannel) =>
     request<{ ok: true }>(`/api/pets/${id}/share-event`, { method: "POST", body: JSON.stringify({ channel }) }),
+
+  // Fase 2 — confirmar/avistar/revelar contacto son JSON planos, sin foto,
+  // así que van directo por JSON.stringify (a diferencia de createPetReport).
+  confirmPet: (
+    id: string,
+    type: "confirm" | "incorrect",
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<PetReport>(`/api/pets/${id}/confirm`, { method: "POST", body: JSON.stringify({ type, ...guest }) }),
+  createPetSighting: (
+    id: string,
+    data: { lat?: number; lng?: number; note?: string },
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<PetSighting>(`/api/pets/${id}/sightings`, { method: "POST", body: JSON.stringify({ ...data, ...guest }) }),
+  getPetSightings: (id: string) => request<PetSighting[]>(`/api/pets/${id}/sightings`),
+  getPossibleMatches: (id: string) => request<PossibleMatch[]>(`/api/pets/${id}/possible-matches`),
+  revealPetContact: (
+    id: string,
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<RevealedPetContact>(`/api/pets/${id}/reveal-contact`, { method: "POST", body: JSON.stringify({ ...guest }) }),
 
   getAllPets: (params: { departmentName?: string; municipalityName?: string } = {}) => {
     const qs = new URLSearchParams();
