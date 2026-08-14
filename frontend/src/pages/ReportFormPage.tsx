@@ -85,6 +85,15 @@ export default function ReportFormPage() {
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6">
+      <button
+        onClick={() => navigate("/")}
+        className="mb-2 inline-flex items-center gap-1.5 rounded-lg py-1.5 pl-1 pr-3 text-sm font-semibold text-slate-200 hover:bg-surface2"
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+        </svg>
+        Volver al inicio
+      </button>
       <h1 className="text-xl font-extrabold">Quiero reportar</h1>
       <p className="mt-1 text-sm text-slate-400">
         Toda la información se muestra como "Sin verificar" hasta que la comunidad la confirme.

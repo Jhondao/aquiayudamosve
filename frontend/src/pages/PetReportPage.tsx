@@ -129,6 +129,15 @@ export default function PetReportPage() {
 
   return (
     <div className="mx-auto max-w-lg px-4 py-6">
+      <button
+        onClick={() => navigate("/mascotas")}
+        className="mb-2 inline-flex items-center gap-1.5 rounded-lg py-1.5 pl-1 pr-3 text-sm font-semibold text-slate-200 hover:bg-surface2"
+      >
+        <svg viewBox="0 0 24 24" className="h-5 w-5 shrink-0" fill="none" stroke="currentColor" strokeWidth="2">
+          <path strokeLinecap="round" strokeLinejoin="round" d="M15 18l-6-6 6-6" />
+        </svg>
+        Volver a mascotas
+      </button>
       <h1 className="text-xl font-extrabold">🐾 Reportar una mascota</h1>
       <p className="mt-1 text-sm text-slate-400">Menos de un minuto — sin necesidad de cuenta.</p>
 

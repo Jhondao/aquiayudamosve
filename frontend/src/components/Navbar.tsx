@@ -16,11 +16,21 @@ export function Navbar() {
     navigate("/");
   }
 
+  const inicio = (
+    <NavLink to="/" end className={linkClass} onClick={() => setOpen(false)}>
+      Inicio
+    </NavLink>
+  );
+
+  const necesitoAyuda = (
+    <NavLink to="/necesito-ayuda" className={linkClass} onClick={() => setOpen(false)}>
+      Necesito ayuda
+    </NavLink>
+  );
+
+  // Orden fijo del menú: Inicio, Necesito ayuda, Reportar, Mascotas, Admin, resto.
   const rest = (
     <>
-      <NavLink to="/" end className={linkClass} onClick={() => setOpen(false)}>
-        Inicio
-      </NavLink>
       <NavLink to="/reportar" className={linkClass} onClick={() => setOpen(false)}>
         Reportar
       </NavLink>
@@ -64,9 +74,8 @@ export function Navbar() {
 
         {/* Desktop nav: everything inline */}
         <nav className="ml-auto hidden flex-wrap items-center gap-1 md:flex">
-          <NavLink to="/necesito-ayuda" className={linkClass} onClick={() => setOpen(false)}>
-            Necesito ayuda
-          </NavLink>
+          {inicio}
+          {necesitoAyuda}
           {rest}
         </nav>
 
@@ -99,7 +108,12 @@ export function Navbar() {
         </div>
       </div>
 
-      {open && <nav className="mt-3 flex flex-col gap-1 border-t border-border pt-3 md:hidden">{rest}</nav>}
+      {open && (
+        <nav className="mt-3 flex flex-col gap-1 border-t border-border pt-3 md:hidden">
+          {inicio}
+          {rest}
+        </nav>
+      )}
     </header>
   );
 }

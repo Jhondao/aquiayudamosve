@@ -66,12 +66,15 @@ export function PushToggle() {
       setStatus("on");
     } catch (err) {
       setStatus(Notification.permission === "denied" ? "denied" : "off");
+      // Los errores del backend (ApiError) ya vienen en español y son
+      // seguros de mostrar tal cual. Los del navegador (ej. "Registration
+      // failed - push service error" cuando Brave bloquea el push de
+      // Google) llegan en inglés y no le dicen nada útil al usuario —
+      // se reemplazan por un mensaje accionable en su lugar.
       const message =
         err instanceof ApiError
           ? err.message
-          : err instanceof Error
-            ? err.message
-            : "No se pudo activar. Intenta de nuevo.";
+          : "No se pudo activar. Si usas Brave o un bloqueador de anuncios, revisa que tengan permitidas las notificaciones push de Google, y vuelve a intentar.";
       setError(message);
     } finally {
       setBusy(false);
