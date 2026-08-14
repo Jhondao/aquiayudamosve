@@ -24,6 +24,7 @@ export default function ReportFormPage() {
   const [nearby, setNearby] = useState<Report[]>([]);
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [quantityNeeded, setQuantityNeeded] = useState("");
@@ -53,8 +54,8 @@ export default function ReportFormPage() {
       setError("Completa todos los campos obligatorios, incluyendo el punto en el mapa.");
       return;
     }
-    if (!profile && (!email.trim() || !phone.trim())) {
-      setError("Agrega tu correo y celular, o inicia sesión.");
+    if (!profile && (!displayName.trim() || (!email.trim() && !phone.trim()))) {
+      setError("Agrega tu nombre y tu correo o celular, o inicia sesión.");
       return;
     }
     setSubmitting(true);
@@ -73,7 +74,9 @@ export default function ReportFormPage() {
         ...(group === "necesidad" && quantityNeeded.trim()
           ? { quantityNeeded: Number(quantityNeeded), quantityUnit: quantityUnit.trim() || undefined }
           : {}),
-        ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
+        ...(profile
+          ? {}
+          : { displayName: displayName.trim(), email: email.trim() || undefined, phone: phone.trim() || undefined }),
       });
       navigate(`/reporte/${report.id}`);
     } catch (err) {
@@ -207,7 +210,17 @@ export default function ReportFormPage() {
         </div>
       )}
 
-      {!profile && <GuestContactFields email={email} setEmail={setEmail} phone={phone} setPhone={setPhone} />}
+      {!profile && (
+        <GuestContactFields
+          email={email}
+          setEmail={setEmail}
+          phone={phone}
+          setPhone={setPhone}
+          displayName={displayName}
+          setDisplayName={setDisplayName}
+          phoneRequired={false}
+        />
+      )}
 
       {error && <p className="mt-4 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
 

@@ -25,7 +25,12 @@ export const createReportSchema = z.object({
   // — ignored silently otherwise, same pattern as isSensitive/coarsening.
   quantityNeeded: z.number().positive().max(1_000_000).optional(),
   quantityUnit: z.string().trim().min(1).max(20).optional(),
-  // Only required when publishing without a session — see reports.routes.ts.
+  // Al publicar sin sesión hace falta nombre + (correo o celular, no ambos
+  // obligatorios) — mismo criterio que confirmar/mascotas, ver
+  // reports.routes.ts. El guard "al menos uno de los dos" vive en el
+  // service, no acá (mismo motivo que needStatusSchema: validateBody está
+  // tipado AnyZodObject, no acepta .refine()).
+  displayName: z.string().trim().min(2).max(80).optional(),
   email: z.string().trim().toLowerCase().email().optional(),
   phone: z
     .string()
