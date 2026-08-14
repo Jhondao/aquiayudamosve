@@ -83,12 +83,71 @@ enum ShareChannel {
   save_image
 }
 
+// PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS, Fase 1. Qué tipo de
+// reporte es (fijo desde que se crea) — distinto de PetStatus, que es el
+// estado mutable del ciclo de vida (ver abajo).
+enum PetReportType {
+  lost
+  found
+  injured
+  needs_help
+}
+
+enum PetSpecies {
+  dog
+  cat
+  bird
+  rabbit
+  horse
+  other
+}
+
+enum PetSex {
+  male
+  female
+  unknown
+}
+
+enum PetSize {
+  small
+  medium
+  large
+}
+
+// Incluye possible_match desde ya aunque ningún código de Fase 1 lo asigne
+// todavía (eso es Fase 2, sugerencias automáticas de coincidencia) — se
+// agrega ahora para no necesitar una migración nueva solo por un valor de
+// enum cuando llegue esa fase.
+enum PetStatus {
+  lost
+  sighted
+  sheltered
+  possible_match
+  found
+  reunited
+  needs_help
+  closed
+  outdated
+}
+
+// Solo relevante cuando PetReportType es needs_help (o injured, para el
+// caso "necesita atención veterinaria urgente").
+enum PetHelpCategory {
+  veterinary
+  food
+  water
+  transport
+  shelter
+  rescue
+  other
+}
+
 model User {
   id                String   @id @default(uuid())
   email             String   @unique
   phone             String?
   // Null for accounts auto-created from a guest report (email + phone, no
-  // password) — see reports.service.ts#resolveGuestContact. isGuest tells
+  // password) — see lib/guestIdentity.ts#resolveGuestContact. isGuest tells
   // login/register apart from a real account sharing the same email.
   passwordHash      String?
   isGuest           Boolean  @default(false)
@@ -107,6 +166,8 @@ model User {
   flagsRaised       ReportFlag[]       @relation("FlagRaisedBy")
   needCommitments   NeedCommitment[]
   shareEvents       ShareEvent[]
+  petReports        PetReport[]        @relation("PetReportCreatedBy")
+  petShareEvents    PetShareEvent[]
   moderationActions ModerationAction[] @relation("ModerationActor")
   auditLogs         AuditLog[]         @relation("AuditActor")
   sessions          Session[]
@@ -390,4 +451,76 @@ model PushSubscription {
   p256dh    String
   auth      String
   createdAt DateTime @default(now())
+}
+
+// PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS, Fase 1. Deliberadamente
+// sin trustScore/confirmations — mascotas no tiene sistema de confianza
+// todavía (eso es justo lo que las confirmaciones comunitarias de Fase 2
+// agregarían), así que no hay nada que decaer por ahora.
+model PetReport {
+  id                  String           @id @default(uuid())
+  reportType          PetReportType
+  species             PetSpecies
+  name                String?
+  breed               String?
+  sex                 PetSex           @default(unknown)
+  size                PetSize?
+  primaryColor        String?
+  distinctiveFeatures String?          @db.Text
+  description         String           @db.Text
+  imageUrl            String?
+  status              PetStatus
+  // Solo relevantes cuando reportType = needs_help (o injured para
+  // isEmergency) — el resto queda NULL, mismo patrón que needStatus en Report.
+  helpCategory        PetHelpCategory?
+  isEmergency         Boolean?
+  departmentName      String
+  municipalityName    String
+  localityName        String?
+  approxLocationText  String?
+  lat                 Float
+  lng                 Float
+  locationSource      LocationSource   @default(manual)
+  // "vista por última vez" (perdida) o "encontrada el" (encontrada) —
+  // opcional porque alguien angustiado puede no recordar la hora exacta.
+  happenedAt          DateTime?
+  // true = el reportante tiene al animal consigo — dispara coarsenCoordinates
+  // en pets.service.ts, igual que isSensitive en Report: nunca se persiste
+  // la dirección exacta de una vivienda privada.
+  isSheltered         Boolean          @default(false)
+  // Visibilidad de moderación (hide/unhide), separada a propósito de
+  // `status` — ese es el ciclo de vida real de la mascota (lost/found/
+  // reunited/...), mezclar "oculto por un moderador" ahí lo conflictuaría.
+  // Mismo patrón que Report.status: "hidden", pero como campo aparte porque
+  // PetStatus ya está ocupado con otro significado.
+  hidden              Boolean          @default(false)
+  createdById         String
+  lastConfirmedAt     DateTime         @default(now())
+  createdAt           DateTime         @default(now())
+  updatedAt           DateTime         @updatedAt
+  deletedAt           DateTime?
+
+  createdBy   User            @relation("PetReportCreatedBy", fields: [createdById], references: [id])
+  shareEvents PetShareEvent[]
+
+  @@index([departmentName, municipalityName])
+  @@index([status])
+  @@index([lat, lng])
+  @@index([createdAt])
+}
+
+// Modelo propio, no una generalización de ShareEvent — ese ya tiene una FK
+// dura a Report; convertirlo a polimórfico tocaría una tabla que ya
+// funciona por una ganancia mínima a esta escala.
+model PetShareEvent {
+  id          String       @id @default(uuid())
+  petReportId String
+  userId      String?
+  channel     ShareChannel
+  createdAt   DateTime     @default(now())
+
+  petReport PetReport @relation(fields: [petReportId], references: [id], onDelete: Cascade)
+  user      User?     @relation(fields: [userId], references: [id])
+
+  @@index([petReportId])
 }

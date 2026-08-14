@@ -45,6 +45,15 @@ incremental, una fase a la vez, sin reemplazar lo que ya funciona.
 WHATSAPP"):** ya implementado — ver sección 4.6/6.10. Genera una pieza visual descargable/compartible
 solo para reportes que la comunidad ya confirmó, no para cualquier reporte (nunca "100% verificado").
 
+**Módulo comunitario de mascotas (documento "PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS"):**
+Fase 1/MVP ya implementada — ver sección 4.7/6.13. Reportar mascotas perdidas/encontradas/heridas o
+que necesitan ayuda, integrado a esta misma app (no una app aparte), reusando la identidad guest,
+`LocationSelector` y el motor de tarjetas de compartir ya existentes. **Sin mecanismo de contacto
+directo todavía** — la reunificación depende de que la pieza compartida por WhatsApp circule y
+llegue a la persona correcta, igual que hoy pasa de forma orgánica en los grupos; un mecanismo de
+contacto y las confirmaciones comunitarias quedan para Fase 2, tal como el propio documento lo pide
+(no implementar fases futuras antes de terminar el MVP).
+
 ## 2. Stack
 
 | Capa | Tecnología |
@@ -78,6 +87,9 @@ backend/src/
     prisma.ts             — instancia única de PrismaClient
     objectStorage.ts       — cliente S3 (Supabase Storage) para subir fotos de evidencia y piezas de compartir
     push.ts               — envío de Web Push (broadcastPush) usando web-push + VAPID
+    cardRenderer.ts        — primitivas genéricas de render satori→sharp (box, qrDataUri, renderCardPng), extraídas de share/ para reusar en pets/, ver 4.7
+    guestIdentity.ts        — resolveGuestContact/syntheticEmailForPhone, extraídas de reports/ para reusar en pets/, ver 4.7
+    recaptcha.ts            — verifyRecaptcha + requireRecaptchaForGuests (reCAPTCHA Enterprise), ver 4.2
   middleware/
     auth.ts                — authenticate (lee JWT, no bloquea) + requireAuth + requireRole
     errorHandler.ts         — HttpError, notFoundHandler, errorHandler (nunca expone stack traces)
@@ -92,6 +104,7 @@ backend/src/
     users/            — GET /api/users/me/reports (reportes propios del usuario logueado)
     push/             — VAPID public key, subscribe/unsubscribe — ver sección 4.5
     share/            — pieza visual + puerta social /r/:id para compartir por WhatsApp — ver sección 4.6
+    pets/             — mascotas perdidas/encontradas/heridas, moderación y compartir propios — ver sección 4.7
     trust/           — trustScore.service.ts (algoritmo de confianza) + reputation.service.ts (reputación de usuario) — sin rutas propias, solo lógica que usan reports/moderation
     security/          — securityEvents.ts: audit trail best-effort de eventos de auth (login, logout, fallos)
   utils/
@@ -127,6 +140,10 @@ perezosamente solo cuando se usa esa feature específica:
 - `STORAGE_*` (Supabase Storage): solo se valida al subir una foto de evidencia.
 - `VAPID_*` (push): solo se valida al enviar un push; sin ellas, `/api/push/vapid-public-key`
   devuelve 404 y el frontend simplemente no ofrece activar notificaciones.
+- `RECAPTCHA_PROJECT_ID`/`RECAPTCHA_API_KEY` (reCAPTCHA Enterprise, ver 4.2 "Confirmar sin
+  cuenta"): sin ellas, `verifyRecaptcha()` deja pasar la acción — el honeypot y
+  `guestActionLimiter` siguen aplicando igual, así que esto nunca bloquea el arranque ni la
+  funcionalidad, solo reduce una capa de la defensa anti-spam.
 - `STALE_HOURS_THRESHOLD` (default 6): horas sin confirmación antes de que un reporte empiece a
   decaer en el algoritmo de confianza.
 - `CORS_ORIGIN` (default `http://localhost:5173`).
@@ -177,14 +194,19 @@ seteado, el body debe traer `email` + `phone`, y `resolveGuestContact()` en `rep
 
 1. Busca un `User` por ese email.
 2. Si existe y **no** es guest (`isGuest: false`, cuenta real con password) → **409**, rechaza —
-   así nadie puede publicar a nombre de otra persona solo escribiendo su correo.
-3. Si existe y es guest → lo reutiliza como `createdById` (actualiza el phone si cambió).
-4. Si no existe → crea un `User` nuevo con `isGuest: true`, `passwordHash: null`,
-   `displayName` derivado del email, y su `UserReputation` en `nuevo`/0.
+   así nadie puede actuar a nombre de otra persona solo escribiendo su correo.
+3. Si existe y es guest → lo reutiliza como identidad (actualiza el phone si vino uno nuevo, nunca
+   pisa el `displayName` que ya tenía).
+4. Si no existe → crea un `User` nuevo con `isGuest: true`, `passwordHash: null`, la
+   `displayName` que se le haya pasado (o derivada del email si no vino ninguna), y su
+   `UserReputation` en `nuevo`/0.
 
-Esto le da al sistema de confianza una identidad estable por reporte **sin introducir un modelo de
-datos paralelo** — un guest es un `User` normal, solo que sin password. Ver también 4.1 (cómo se
-"reclama" después via registro).
+Esto le da al sistema de confianza una identidad estable **sin introducir un modelo de datos
+paralelo** — un guest es un `User` normal, solo que sin password. `phone`/`displayName` son
+opcionales en la firma (`email` es el único dato realmente obligatorio, es la clave única de
+identidad) — publicar exige ambos igual por su propio schema, pero **confirmar sin cuenta (abajo)
+solo exige nombre + correo**, reusando la misma función. Ver también 4.1 (cómo se "reclama" después
+vía registro).
 
 Categorías **sensibles** (`SENSITIVE_CATEGORY_KEYS`: `personas_heridas`, `personas_vulnerables`,
 `rescate_requerido`) hacen que `createReport` llame `coarsenCoordinates()` (redondea a ~111m,
@@ -194,11 +216,37 @@ una ubicación precisa para personas vulnerables.
 Al crear un reporte de grupo `critico` o `necesidad`, se dispara `broadcastPush()` (fire-and-forget,
 no bloquea la respuesta) con un emoji según el grupo.
 
-Otros endpoints, todos con `requireAuth` (a propósito — publicar es lo que se abrió, actuar sobre
-el reporte de otro sigue pidiendo cuenta):
-- `POST /:id/confirm` — tipo `confirm`/`unsure`/`incorrect`. Único por `(reportId, userId, type)`
-  (409 si se repite). Si es `confirm`, actualiza `lastConfirmedAt` y llama
-  `rewardUsefulConfirmation` (reputación).
+**Confirmar sin cuenta:** `POST /:id/confirm` — tipo `confirm`/`unsure`/`incorrect`, único por
+`(reportId, userId, type)` (409 si se repite). Si es `confirm`, actualiza `lastConfirmedAt` y llama
+`rewardUsefulConfirmation` (reputación). Tampoco requiere sesión (mismo criterio que publicar): sin
+`req.user`, el body debe traer `displayName` + (`email` **o** `phone`, no ambos obligatorios — a
+diferencia de publicar, que sí exige los dos juntos). Sin `userId` y sin ninguno de los dos
+contactos, 400. Si solo llega `phone` (sin `email`), `syntheticEmailForPhone(phone)` genera un
+correo placeholder determinístico (`tel-<dígitos>@guest.aquiayudamosve.local`, nunca mostrado en la
+UI) para satisfacer la columna `email` (`NOT NULL @unique`) antes de llamar a
+`resolveGuestContact()` — dos personas confirmando con el mismo celular terminan bajo la misma
+identidad guest, a propósito, mismo criterio que ya aplica hoy por correo repetido.
+
+Anti-spam para esta única puerta sin cuenta (antes, `requireAuth` ya cerraba el paso):
+- **Honeypot**: `confirmSchema` tiene un campo `website` (`z.string().max(0)`) que un humano real
+  nunca ve — el frontend lo oculta con CSS (`sr-only` + `aria-hidden`, nunca `display:none`/
+  `type=hidden`, que un bot rudimentario sí detecta). Si llega con contenido, 400 automático en la
+  validación del schema, sin lógica extra.
+- **`guestActionLimiter`** (`middleware/rateLimit.ts`): 8 intentos / 10 min por IP, con
+  `skip: (req) => Boolean(req.user)` — no le suma restricción a un usuario con sesión (ya cubierto
+  por `confirmationLimiter`, 20/min), pero limita fuerte a quien no tiene cuenta, porque cada
+  intento puede acuñar una identidad guest nueva.
+- **reCAPTCHA Enterprise** (`lib/recaptcha.ts`, `requireRecaptchaForGuests`): el frontend genera un
+  token (`frontend/src/utils/recaptcha.ts`, `grecaptcha.enterprise.execute`) solo cuando no hay
+  sesión. El backend **solo bloquea si el token llegó y Google lo marcó inválido/con score bajo**
+  (`< 0.5`) — un token ausente (script bloqueado por un ad-blocker, sin red, o `RECAPTCHA_PROJECT_ID`/
+  `RECAPTCHA_API_KEY` sin configurar en `.env`) nunca bloquea por sí solo, para no convertir "quitar
+  la barrera de cuenta" en "agregar una barrera de Google" para alguien real. La site key es pública
+  y vive hardcodeada en el frontend (`index.html` + `utils/recaptcha.ts`); el project ID y el API
+  key son privados, solo en `.env` del backend.
+
+Otros endpoints, todos con `requireAuth` (a propósito — publicar/confirmar es lo que se abrió,
+actuar sobre el reporte de otro de cualquier otra forma sigue pidiendo cuenta):
 - `POST /:id/flag` — denuncia con motivo, marca el reporte para revisión de moderadores.
 - `POST /:id/update` — actualización rápida de texto ("Sigue activo", "Se agotaron los
   suministros"...); si `deactivates: true`, pone el reporte en `status: inactive`.
@@ -429,6 +477,99 @@ mostrado en un chat y no ofrece forma pública de invalidarlo — por eso todo t
 incluye "Consulta el estado actualizado", el link en sí siempre lleva al estado real aunque el
 preview visual quede desactualizado en un chat viejo.
 
+### 4.7 Mascotas (`modules/pets/`)
+
+Fase 1/MVP del documento "PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS": reportar mascotas
+perdidas, encontradas, heridas o que necesitan ayuda, con foto, ubicación, estado y compartir por
+WhatsApp. **Deliberadamente no comparte código con `reports/`** más allá de dos extracciones a
+`lib/` (`cardRenderer.ts`, `guestIdentity.ts`) — mismo criterio de "sin servicios genéricos
+compartidos entre módulos" que ya rige el resto del backend (sección 3). **Sin `trustScore`/
+confirmaciones** — mascotas no tiene eje de confianza en Fase 1 en absoluto (eso es lo que las
+confirmaciones comunitarias de Fase 2 agregarían).
+
+**Modelo `PetReport`**: `reportType` (`lost`/`found`/`injured`/`needs_help`), `species`, `name?`,
+`breed?`, `sex` (default `unknown`), `size?`, `primaryColor?`, `distinctiveFeatures?`,
+`description`, `imageUrl?`, `status` (ciclo de vida, ver abajo), `helpCategory?`/`isEmergency?`
+(solo relevantes si `reportType` es `needs_help`/`injured`, `NULL` en cualquier otro caso — mismo
+patrón que `needStatus` en `Report`), ubicación (mismos campos que `Report`: `departmentName`/
+`municipalityName`/`localityName?`/`locationSource`/`lat`/`lng`/`approxLocationText?`),
+`happenedAt?` ("vista por última vez" o "encontrada el", opcional porque alguien angustiado puede
+no recordar la hora exacta), `isSheltered` (bool), `hidden` (bool, moderación), `createdById`,
+`lastConfirmedAt`.
+
+**`status` (`PetStatus`) es puramente de ciclo de vida** (`lost`/`sighted`/`sheltered`/
+`possible_match`/`found`/`reunited`/`needs_help`/`closed`/`outdated`) — a diferencia de
+`Report.status`, que sí mezcla moderación (`hidden`) con vigencia (`active`/`inactive`), acá
+**moderación vive en un campo `hidden` separado**: los valores de `PetStatus` ya están completamente
+ocupados por significado de ciclo de vida, no queda ninguno libre para "oculto por moderación" sin
+chocar con un estado real. `possible_match` existe en el enum desde ya aunque ningún código de Fase
+1 lo asigne todavía — evita una migración nueva solo por un valor de enum cuando llegue Fase 2
+(sugerencias automáticas de coincidencia).
+
+**`createPetReport(actor, input, photoBuffer?)`** (`pets.service.ts`) — publicar tampoco pide cuenta
+(mismo criterio que reportes/confirmar), resolviendo identidad guest vía `lib/guestIdentity.ts`.
+`initialStatus(reportType, isSheltered)`: `lost` → `lost`; `found` + resguardada → `sheltered`;
+`found` sin resguardar → `sighted`; `injured`/`needs_help` → `needs_help`. Si `isSheltered` (solo
+tiene efecto cuando `reportType === "found"` — cualquier otro valor lo ignora sin importar qué haya
+mandado el cliente), aplica `coarsenCoordinates()` (mismo helper que `isSensitive` en reportes) y
+reemplaza `approxLocationText` por un texto genérico: **nunca se persiste la dirección exacta de una
+vivienda privada** que está resguardando al animal. Si `reportType` es `needs_help`/`injured` y no
+llegó `helpCategory`, 400 — ese guard vive en el service, no en el schema Zod (mismo motivo que
+`needStatusSchema`: `validateBody` está tipado `AnyZodObject`, no acepta `.refine()`).
+
+**`POST /api/pets` es multipart, no JSON** — única excepción a la convención del resto del backend
+(donde subir una foto es siempre una llamada aparte, ej. `POST /reports/:id/evidence`): la foto
+viaja en el **mismo request** que el resto de los campos, porque el documento fuente pide un flujo
+de "menos de 60 segundos" con la foto como parte central, no un segundo paso que alguien angustiado
+podría no completar. Como multer puebla `req.body` con strings para *todo*, incluidos números y
+booleanos, `pets.schemas.ts` no puede usar `z.coerce.number()`/`z.coerce.boolean()` directo:
+- `requiredNumericString(min, max)` = `z.string().trim().min(1).pipe(z.coerce.number().gte(min).lte(max))`
+  — `z.coerce.number()` solo() fallaría silencioso: `Number("")` es `0` en JS, así que un `lat`/`lng`
+  vacío pasaría como `0,0` en vez de fallar la validación.
+- `booleanString` = `z.string().optional().transform((v) => v === "true")` — no `z.coerce.boolean()`:
+  `Boolean("false")` es `true`, cualquier string no vacío coacciona a verdadero. Mismo patrón que ya
+  usa `listQuerySchema.institutional` en `reports.schemas.ts`.
+
+Orden de middleware en `pets.routes.ts`: `createPetReportLimiter → uploadPetPhoto (multer) →
+validateBody(createPetReportSchema) → requireRecaptchaForGuests → handler` — multer puebla
+`req.body` antes de llamar a `next()`, así que `validateBody` corriendo después sí ve esos campos.
+
+**`updatePetStatus(id, userId, {status, note?})`** — `requireAuth`, **comunitario, no restringido al
+creador** (mismo criterio que `updateNeedStatus` en reportes: no se construyó una máquina nueva de
+verificación de dueño para una mascota que pudo haber creado un invitado sin sesión, que no tiene
+forma de demostrar después que es "suya"). A diferencia de `updateNeedStatus` (que además deja una
+línea en el timeline público del reporte), acá no existe timeline todavía — así que cada cambio
+escribe una entrada en el `AuditLog` genérico ya existente (`action: "pet.status_update"`, `metadata:
+{from, to, note}`, mismo mecanismo que ya usan `moderateReport`/`createReport`, cero modelo/UI
+nuevos, ya se ve en `/api/admin/audit-logs` y en `AdminPage.tsx`): "reunida" es la métrica norte del
+documento (la señal de que el sistema funcionó), así que un cambio malicioso sin ningún remedio/rastro
+visible es más grave acá que el caso análogo en reportes — el fix no cambia quién puede hacer el
+cambio, solo asegura que un moderador pueda verlo y revertirlo.
+
+**Moderación** (`petModeration.routes.ts`, montado en `/api/admin/pets`, `requireAuth +
+requireRole("moderator","admin")`): `GET /` (todas, incluye `hidden`), `PATCH /:id` con
+`action: "hide"|"unhide"|"delete"` — **sin** `markFalse`/`resolve`, esos son conceptos del
+`trustScore` que mascotas no tiene en Fase 1. `delete` es soft (`deletedAt`), igual que reportes.
+
+**Compartir por WhatsApp** (`petShareCard.service.ts`, reusa `lib/cardRenderer.ts`) —
+`determinePetShareStatus(pet)` clasifica en `lost`/`found`/`reunited`/`needs_help` (`reunited` gana
+siempre que `status === "reunited"`, sin importar el `reportType` original). **A diferencia de
+reportes, los 4 estados siempre generan imagen** — no hay eje de confianza que filtrar ("nunca
+glamorizar lo no confirmado" no aplica porque no hay noción de "no confirmado" para mascotas en Fase
+1. Copy en español por estado, incluido el cierre automático "🐾 YA VOLVIÓ A CASA" cuando el estado
+pasa a `reunited`. Puerta social propia en `/r/mascota/:id` (`petShareGateway.routes.ts`, montada
+**antes** de `/r/:id` de reportes en `app.ts` — el orden no importa estructuralmente, ya que
+`/mascota` es un segundo segmento que `/r/:id` de Express nunca matchea, pero se dejó así por
+claridad). `PetShareEvent` es un modelo propio, no una generalización de `ShareEvent` (que ya tiene
+una FK dura a `Report` con `onDelete: Cascade` — retocarlo a polimórfico tocaría una tabla que ya
+funciona por una ganancia mínima a esta escala).
+
+**Sin mecanismo de contacto directo (confirmado con el usuario, Fase 1).** El documento tampoco lo
+especifica (lo deja abierto). La reunificación depende de que la pieza compartida por WhatsApp
+circule y llegue a la persona correcta — un mecanismo de contacto (revelar correo/celular con
+advertencia, o "reportar posible coincidencia") queda como el primer punto de Fase 2, junto con las
+confirmaciones comunitarias que esa fase agrega.
+
 ## 5. Base de datos — modelo completo (`backend/prisma/schema.prisma`)
 
 MySQL 8. UUIDs como PK en todo. Migraciones en `backend/prisma/migrations/`, aplicadas en orden:
@@ -442,7 +583,12 @@ valores de `city` que existían a su departamento real, y `DROP COLUMN city` en 
 "Cobertura territorial nacional" en 4.2 y la decisión correspondiente en la sección 10) →
 `need_commitments` (tabla nueva `NeedCommitment`, sin backfill — no reemplaza ni toca ninguna
 columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
-`share_events` (tabla nueva `ShareEvent`, sin backfill, ver "Compartir por WhatsApp" en 4.6).
+`share_events` (tabla nueva `ShareEvent`, sin backfill, ver "Compartir por WhatsApp" en 4.6) →
+`pet_reports` (tablas nuevas `PetReport`/`PetShareEvent` + 6 enums, sin backfill, ver 4.7) →
+`pet_report_hidden_flag` (columna `hidden` en `PetReport`, agregada como segunda migración chica
+después de notar, ya implementando el service, que `PetStatus` no tenía ningún valor libre para
+moderación — más seguro que editar la migración anterior ya aplicada, que hubiera generado drift en
+el checksum que Prisma guarda por migración).
 
 | Modelo | Para qué |
 |---|---|
@@ -463,6 +609,8 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
 | `Session` | Refresh tokens activos (hash, no el token) |
 | `SecurityEvent` | Eventos de auth (login/logout/fallos) — best-effort, nunca bloquea el flujo |
 | `PushSubscription` | Suscripción push por endpoint, sin dueño |
+| `PetReport` | Mascota perdida/encontrada/herida/necesita ayuda — ver 4.7 |
+| `PetShareEvent` | Telemetría best-effort de compartir un `PetReport`, propio (no reusa `ShareEvent`) — ver 4.7 |
 
 `ReputationLevel` (enum): `nuevo` → `colaborador` → `colaborador_confiable` →
 `voluntario_verificado` → `organizacion` → `entidad_institucional`.
@@ -473,22 +621,31 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
 `CommitmentStatus` (enum, Fase A de "PROMPT MAESTRO v3"): `committed` / `on_the_way` / `delivered` /
 `cancelled` — estado de un `NeedCommitment`, ver 4.2.
 `ShareChannel` (enum): `whatsapp` / `web_share` / `copy_link` / `save_image` — canal de un
-`ShareEvent`, ver 4.6.
+`ShareEvent`, ver 4.6 (reusado también por `PetShareEvent`, ver 4.7).
+
+Enums de mascotas (ver 4.7): `PetReportType` (`lost`/`found`/`injured`/`needs_help`), `PetSpecies`
+(`dog`/`cat`/`bird`/`rabbit`/`horse`/`other`), `PetSex` (`male`/`female`/`unknown`), `PetSize`
+(`small`/`medium`/`large`), `PetStatus` (`lost`/`sighted`/`sheltered`/`possible_match`/`found`/
+`reunited`/`needs_help`/`closed`/`outdated`), `PetHelpCategory` (`veterinary`/`food`/`water`/
+`transport`/`shelter`/`rescue`/`other`).
 
 ## 6. Frontend — arquitectura
 
 ```
 frontend/src/
-  main.tsx                — entry point: BrowserRouter > AuthProvider > App
+  main.tsx                — entry point: BrowserRouter > AuthProvider > GuestContactProvider > App
   App.tsx                 — layout raíz: Navbar + Routes + Footer
   api/client.ts             — único punto de fetch al backend — ver 6.1
-  context/AuthContext.tsx    — estado de sesión global (profile, login/register/logout)
+  context/
+    AuthContext.tsx          — estado de sesión global (profile, login/register/logout)
+    GuestContactContext.tsx   — nombre/correo/celular de invitado recordado en memoria para la sesión, ver 6.11
   types.ts                 — tipos compartidos (Report, Profile, Category, ...)
   pages/                  — una por ruta, ver 6.2
   components/
     Navbar.tsx              — logo + nav responsive (hamburguesa en móvil)
     Footer.tsx               — nota de proyecto sin fines de lucro
-    GuestContactFields.tsx    — inputs de email/celular reusados en NeedHelpPage y ReportFormPage
+    GuestContactFields.tsx    — inputs de nombre/correo/celular, reusados en NeedHelpPage/ReportFormPage/GuestConfirmModal
+    GuestConfirmModal.tsx     — modal compartido por HomePage y ReportDetailPage para confirmar sin cuenta, ver 6.11
     LocationSelector.tsx      — GPS/catálogo/manual + mapa embebido de un pin, ver 6.8
     MapView.tsx               — mapa Leaflet con markers por categoría, centra con fitBounds (ver 6.8)
     ReportCard.tsx            — tarjeta de reporte en listados
@@ -497,8 +654,15 @@ frontend/src/
     ShareSheet.tsx             — bottom sheet de compartir (WhatsApp/otra app/copiar/guardar), ver 6.10
     categoryStyle.ts           — GROUP_META: color/label/badge por CategoryGroup (única fuente de verdad de estilo por categoría)
     needStatusStyle.ts          — NEED_STATUS_META: emoji/badge/color de marcador por NeedStatus (Fase 1) — el texto sigue viniendo del backend (needStatusLabel)
+    PetCard.tsx                — tarjeta de mascota en listados, ver 6.13
+    PetStatusBadge.tsx          — pill de PetStatus, ver 6.13
+    PetMapLayer.tsx             — mapa Leaflet propio para /mascotas (no generaliza MapView.tsx), ver 6.13
+    PetShareSheet.tsx           — casi duplicado de ShareSheet.tsx apuntando a los endpoints de mascotas, ver 6.13
+    petStatusStyle.ts           — PET_STATUS_META + labels de species/reportType/helpCategory — a diferencia de needStatusStyle.ts, acá el texto SÍ vive en el frontend (el backend nunca calculó labels para mascotas), ver 6.13
   data/colombiaLocations.ts   — catálogo departamento→municipios de Colombia, ver 6.8
-  utils/time.ts              — relativeTime() ("hace 5 min")
+  utils/
+    time.ts                  — relativeTime() ("hace 5 min")
+    recaptcha.ts              — getRecaptchaToken(action), envuelve grecaptcha.enterprise, ver 6.11
   styles/index.css            — Tailwind + estilos globales (incluye .map-tag para las etiquetas del mapa)
 ```
 
@@ -522,10 +686,14 @@ Un único `request<T>()` centraliza todo el fetch. Detalles importantes:
 | `/` | `HomePage` | público — hub de situación, ver 6.4 |
 | `/necesito-ayuda` | `NeedHelpPage` | público (con o sin cuenta) |
 | `/reportar` | `ReportFormPage` | público (con o sin cuenta) |
-| `/reporte/:id` | `ReportDetailPage` | lectura pública; confirmar/actualizar/evidencia requiere login (redirige a `/login`) |
+| `/reporte/:id` | `ReportDetailPage` | lectura pública; confirmar es público (ver 6.11); denunciar/actualizar/evidencia/estado de necesidad requieren login (redirige a `/login`) |
 | `/login`, `/registro` | `LoginPage`, `RegisterPage` | público |
 | `/perfil` | `ProfilePage` | requiere sesión |
-| `/admin` | `AdminPage` | requiere rol `moderator`/`admin` |
+| `/admin` | `AdminPage` | requiere rol `moderator`/`admin` — incluye moderación de mascotas, ver 6.13 |
+| `/privacidad` | `PrivacyPolicyPage` | público — Habeas Data, ver 6.12 |
+| `/mascotas` | `PetsPage` | público (con o sin cuenta) — ver 6.13 |
+| `/mascotas/reportar` | `PetReportPage` | público (con o sin cuenta) — ver 6.13 |
+| `/mascotas/:id` | `PetDetailPage` | lectura pública; cambiar estado requiere sesión — ver 6.13 |
 
 ### 6.3 Publicar sin cuenta (frontend)
 
@@ -534,6 +702,13 @@ hacían (mostraban solo un botón "Inicia sesión"), eso se quitó a propósito.
 - Si hay `profile`, el submit no manda `email`/`phone` (el backend usa `req.user.id`).
 - Si no hay `profile`, se renderiza `<GuestContactFields>` (email + celular, ambos requeridos
   client-side antes de permitir el submit) y esos valores se mandan al backend.
+
+`GuestContactFields.tsx` se reusa también dentro de `GuestConfirmModal.tsx` para confirmar sin
+cuenta (ver 6.11 más abajo) — ganó props opcionales `displayName`/`setDisplayName` (solo se
+renderiza el campo "Nombre" si vienen), `phoneRequired` (default `true`, sin cambiar el
+comportamiento de los formularios de arriba — el modal lo pasa en `false`), `compact` (oculta el
+encabezado "Publicando sin cuenta..." cuando el que lo usa ya tiene su propio texto, como el
+modal) y `honeypot` (campo anti-spam, ver 4.2).
 
 En `ReportFormPage`, el botón "CONFIRMAR EXISTENTE" sobre reportes cercanos duplicados solo llama
 `confirmReport` (requiere auth) si hay `profile`; si no, el botón se relee como "VER REPORTE" y solo
@@ -610,8 +785,10 @@ dos inputs opcionales de cantidad+unidad junto al resto del formulario, mandados
 `api.createReport()` solo si se llenó cantidad. `ReportDetailPage.tsx` tiene una sección "Estado de
 la necesidad" (visible solo si `report.category.group === "necesidad"`) con un botón directo
 "✅ Ya está cubierto — no traer más" y un formulario genérico (select de los 6 estados + cantidad
-recibida) que llaman `api.updateNeedStatus()`; ambos pasan por el mismo `guardedAction` que ya usan
-confirmar/denunciar (redirige a `/login` si no hay sesión). `ReportCard.tsx` y el `Popup` de
+recibida) que llaman `api.updateNeedStatus()`; ambos pasan por `guardedAction` (redirige a
+`/login` si no hay sesión) — a diferencia de confirmar (ver 6.11 más abajo), marcar el estado de
+una necesidad **sigue** pidiendo cuenta, no se abrió con este cambio. `ReportCard.tsx` y el `Popup`
+de
 `MapView.tsx` muestran el mismo badge de estado; `MapView.tsx` además cambia el **color del
 marcador** a verde/azul cuando `needStatus` es `cubierto`/`excedente` — eso es lo que evita que
 alguien lleve ayuda a un punto ya resuelto sin tener que abrir el popup para enterarse.
@@ -695,13 +872,128 @@ confirmar/denunciar/actualizar.
 **Banners de CTA tras una transición de estado** — ambos capturan el estado *antes* del `await` para
 detectar si la acción fue la que causó la transición (y no mostrar el banner si el reporte ya estaba
 en ese estado):
-- `confirmReportAndOfferShare()`: si `trustLevel` pasa a `confirmado`/`institucional` por primera
-  vez, banner "Este reporte ya está confirmado por la comunidad." → "Compartir con mi comunidad".
+- `confirmAsGuestOrUser("confirm")` (ver 6.11 — el nombre de la función cambió cuando confirmar
+  dejó de requerir cuenta, ya no es solo "confirm and offer share"): si `trustLevel` pasa a
+  `confirmado`/`institucional` por primera vez, banner "Este reporte ya está confirmado por la
+  comunidad." → "Compartir con mi comunidad".
 - `markCoveredAndOfferShare()`: si `needStatus` pasa a `cubierto` por primera vez, banner "¡Gracias
   por actualizar!" → "Compartir actualización por WhatsApp".
 
 Ambos banners abren el mismo `<ShareSheet>` montado al final del componente — no hace falta pasarle
 una variante, el backend recalcula `status` sobre el reporte ya actualizado.
+
+### 6.11 Confirmar sin cuenta (frontend)
+
+**Dos puntos de entrada, un solo flujo compartido.** El botón "CONFIRMAR" existe en dos lugares
+independientes — la tarjeta de cada reporte en la lista del home (`ReportCard.tsx`, vía el
+`onConfirm` que le pasa `HomePage.tsx`) y los tres botones de `ReportDetailPage.tsx`
+(CONFIRMAR/NO ESTOY SEGURO/REPORTAR INCORRECTO) — y los dos tenían que dejar de pedir cuenta a la
+vez; arreglar solo uno deja al otro silenciosamente redirigiendo a `/login` (bug real detectado
+después de un primer intento que solo tocó `ReportDetailPage.tsx`).
+
+**`GuestContactContext`** (`frontend/src/context/GuestContactContext.tsx`, montado en `main.tsx`
+junto a `AuthProvider`) guarda `{ displayName, email?, phone? } | null` **en memoria, nunca
+persistido** (mismo criterio que el access token en `api/client.ts`) — se pide una sola vez por
+visita/pestaña: quien confirma varios reportes seguidos (en el home o en detalle, da igual) no
+vuelve a escribir su nombre/contacto cada vez.
+
+**`GuestConfirmModal.tsx`** — modal compartido por ambas páginas. Se abre solo cuando `!profile &&
+!guestContact`; si ya hay `guestContact` guardado, ninguna página vuelve a mostrar nada, confirma
+directo. Copy explícito: *"Solo tu nombre y tu correo o celular — no creamos ninguna cuenta ni
+contraseña"* — respuesta directa a que esto **no** debe sentirse como un registro. Pide nombre +
+(correo **o** celular, no ambos — el propio modal valida "al menos uno" antes de permitir enviar,
+mismo criterio que el backend). Al enviar: `rememberGuestContact()` guarda el contacto en el
+contexto (para no volver a preguntar) y ejecuta la acción que estaba pendiente
+(`pendingConfirmType`/`pendingConfirmId` según la página).
+
+En ambas páginas, cada botón llama una única función (`confirmAsGuestOrUser(type)` en
+`ReportDetailPage.tsx`, `handleConfirm(id)` en `HomePage.tsx`) que **nunca pasa por
+`guardedAction`** (ese helper redirige a `/login`, exactamente la barrera que se quitó): con
+`profile`, confirma directo; sin `profile` pero con `guestContact` ya guardado, confirma directo
+con esos datos; sin ninguno de los dos, abre `GuestConfirmModal`.
+
+`frontend/src/utils/recaptcha.ts#getRecaptchaToken(action)` envuelve
+`grecaptcha.enterprise.execute()` en una promesa que resuelve a `null` (nunca rechaza) si el script
+no cargó — se pide el token solo cuando se confirma como invitado, y se manda tal cual (aunque sea
+`null`) al backend, que decide si bloquea o no (ver 4.2, `requireRecaptchaForGuests`: un token
+ausente nunca bloquea por sí solo). En local, el badge de reCAPTCHA muestra "Localhost is not
+supported by this site key" — normal y esperado, la site key está registrada para los dominios de
+producción, no para desarrollo; el flujo sigue funcionando igual porque el backend no exige el
+token, solo lo verifica si llegó.
+
+### 6.12 Habeas Data / política de tratamiento de datos personales
+
+`PrivacyPolicyPage.tsx` (ruta `/privacidad`, enlazada desde `Footer.tsx` en toda la app) — página
+en español orientada a la Ley 1581 de 2012 y el Decreto 1377 de 2013 de Colombia (Habeas Data): qué
+datos se recolectan (nombre/correo/celular, ubicación, fotos de evidencia) y para qué, con quién se
+comparten (nunca con fines comerciales — solo los proveedores técnicos que hacen funcionar la
+plataforma), los 5 derechos del titular que exige la ley (conocer/actualizar/rectificar; solicitar
+prueba de autorización; ser informado; revocar autorización y/o solicitar supresión; acceder
+gratis), y cómo ejercerlos (`contacto@aquiayudamosve.org` — mismo correo que ya se usaba como
+`VAPID_CONTACT` por defecto, reusado a propósito en vez de inventar uno nuevo). Escrita en lenguaje
+llano, sin inventar una razón social/NIT que no existe — se describe honestamente como iniciativa
+comunitaria sin fines de lucro (mismo texto que ya usa `Footer.tsx`), no una empresa.
+
+**Aviso, no checkbox bloqueante.** `GuestContactFields.tsx` (cubre `ReportFormPage.tsx`,
+`NeedHelpPage.tsx` y `GuestConfirmModal.tsx` de una sola vez, ver 6.11) y `RegisterPage.tsx` tienen
+un texto corto con link a `/privacidad` junto al campo de datos/botón de enviar — a propósito no es
+una casilla de aceptación obligatoria que bloquee el formulario: esta app lleva toda la sesión
+quitando barreras de fricción para publicar/confirmar en una emergencia, y agregar un checkbox
+bloqueante justo ahí reintroduciría el mismo tipo de fricción. Informa la finalidad del tratamiento
+igual (que es la obligación central de Habeas Data) sin bloquear el flujo.
+
+### 6.13 Mascotas (frontend)
+
+**`PetsPage.tsx`** (`/mascotas`) — 3 acciones principales (PERDÍ MI MASCOTA / ENCONTRÉ UNA MASCOTA /
+NECESITA AYUDA — **sin** "QUIERO AYUDAR", eso es Fase 3 del documento, sin `PetResource` todavía),
+filtros de departamento/municipio (mismo patrón que `HomePage`) + chips por `reportType`, lista de
+`PetCard`, y un mapa propio (`PetMapLayer`, ver abajo) — mascotas **no** se mete en los filtros del
+mapa principal de reportes, tiene el suyo, más chico.
+
+**`PetReportPage.tsx`** (`/mascotas/reportar?type=lost|found|needs_help`) — una sola página con
+secciones reveladas progresivamente (mismo patrón que `ReportFormPage.tsx`, no un wizard separado
+por rutas). El toggle de 3 vías se precarga desde el query param pero se puede cambiar después de
+aterrizar (igual que el toggle de grupo en `ReportFormPage`). Si `reportType === "found"`, aparece
+el toggle "¿La tienes contigo ahora?" (`isSheltered`) — la distinción "la vi" vs. "la tengo
+resguardada" que pide el documento, con aviso de que la dirección exacta no se muestra si está
+resguardada. Si es `needs_help`/`injured`, aparece el select de `helpCategory` (obligatorio) +
+checkbox de urgencia. Reusa `LocationSelector` y `GuestContactFields` (trae el aviso de Habeas Data
+gratis, ver 6.12) tal cual. **La foto va en el mismo `FormData` que el resto de los campos** (ver
+4.7) — `api.createPetReport()` arma el `FormData` a mano (números → string, booleanos →
+`"true"`/`"false"` explícito, nunca omitidos — `booleanString` en el backend lee el string literal)
+y pasa por el `request()` compartido de `api/client.ts`, **nunca un `fetch` crudo** como
+`submitEvidence` en `ReportDetailPage.tsx` — ese patrón nunca manda el header `Authorization` (solo
+la cookie, que `authenticate` en el backend nunca lee), así que un usuario con sesión que reportara
+una mascota por ese camino perdería su atribución silenciosamente y terminaría como invitado igual
+— bug real que este componente evita desde el diseño, no una precaución hipotética.
+
+**`PetDetailPage.tsx`** (`/mascotas/:id`) — detalle + `PetStatusBadge` + banner de celebración fijo
+cuando `status === "reunited"` ("🎉 ¡Nombre ya volvió a casa!") + botón COMPARTIR (`PetShareSheet`)
++ control de cambio de estado. El control de estado se oculta detrás de `!profile` (muestra "Inicia
+sesión para actualizar el estado" en su lugar) — a diferencia de confirmar reportes (6.11, que se
+abrió del todo), cambiar el estado de una mascota **sigue** pidiendo cuenta, mismo criterio que
+`updateNeedStatus` de reportes (6.7): es una acción con más impacto por intento que un simple voto.
+El select de estados excluye `possible_match` a propósito — Fase 2, ningún flujo de Fase 1 lo
+produce ni lo consume.
+
+**`PetMapLayer.tsx`** — copia del setup de Leaflet ya probado en `MapView.tsx` (`CircleMarker`,
+nunca `Marker` — mismo bug de íconos rotos con Vite) en vez de generalizar ese componente, que está
+tipado específicamente a `Report[]`.
+
+**`PetShareSheet.tsx`** — casi duplicado de `ShareSheet.tsx` apuntando a `api.getPetShareCard`/
+`api.recordPetShareEvent` en vez de los de reportes — el propio documento sugiere este componente
+separado. A diferencia del original, nunca debería mostrar el estado "solo enlace, sin imagen" en
+la práctica (los 4 estados de mascota siempre generan imagen, ver 4.7), pero el fallback se deja
+igual por si la subida a almacenamiento falla.
+
+**Integración con el resto de la app**: `Navbar.tsx` gana un `NavLink` a `/mascotas` dentro del
+fragmento `rest` ya compartido entre desktop y menú hamburguesa (aparece en ambos sin JSX nuevo para
+mobile). `HomePage.tsx` gana una sección propia "🐾 Mascotas" (no una 5ª tarjeta en el grid de
+"Situación actual", que ya es `grid-cols-4` completo) con conteo en vivo
+(`api.getPetReports({pageSize: 1}).total`) y link a `/mascotas`. `AdminPage.tsx` gana una sección
+apilada con su propia tabla (`PetsTable`, no una generalización de `ReportsTable`, que está tipada a
+`Report[]` con columnas específicas como `TrustBadge`) — solo hide/unhide/delete, sin
+markFalse/resolve (conceptos de `trustScore` que mascotas no tiene).
 
 ## 7. Flujos de punta a punta
 
@@ -716,9 +1008,10 @@ como guest + una password → `registerUser` detecta `isGuest: true` en el `User
 agrega password y pone `isGuest: false` → mismo `User.id`, sus reportes y reputación previos ya
 están ahí, no hay migración de datos que hacer.
 
-**Confirmar un reporte:** requiere sesión (login o cuenta reclamada). `POST /:id/confirm` →
-`recomputeReportTrustScore` recalcula el score con el nuevo dato → si es `type: confirm`,
-`rewardUsefulConfirmation` sube reputación de quien confirma y de quien creó el reporte.
+**Confirmar un reporte:** con sesión o sin ella (ver 4.2 "Confirmar sin cuenta" — sin sesión, nombre
++ correo resuelven una identidad guest vía `resolveGuestContact`, igual que publicar). `POST
+/:id/confirm` → `recomputeReportTrustScore` recalcula el score con el nuevo dato → si es `type:
+confirm`, `rewardUsefulConfirmation` sube reputación de quien confirma y de quien creó el reporte.
 
 **Un reporte decae solo:** nadie necesita correr un cron — cada vez que se **lee** un reporte
 (`serializeReport`), `applyDecay` calcula cuánto restar según horas desde `lastConfirmedAt`. El
@@ -743,6 +1036,16 @@ catálogo) → coloca el pin en el mapa embebido → `POST /api/reports` con `de
 `municipalityName` libres, sin ningún catálogo/enum del lado del backend que pueda rechazarlo → el
 reporte queda igual de visible que uno de Cali, solo que fuera del rango de los chips de acceso
 rápido del home (se encuentra filtrando por su departamento/municipio o navegando el mapa).
+
+**Reportar y reunificar una mascota:** usuario en `/mascotas` sin sesión → PERDÍ MI MASCOTA →
+`/mascotas/reportar?type=lost` con foto + ubicación + nombre/correo → `POST /api/pets` (multipart,
+sin `Authorization`) → `resolveGuestContact` crea/reutiliza un `User` guest (mismo mecanismo que
+reportes) → `status: "lost"` → aparece en `/mascotas` y en su mapa → cualquiera con cuenta comparte
+por WhatsApp (`PetShareSheet`, genera pieza + texto) → alguien la reconoce por la pieza compartida
+(sin mecanismo de contacto en Fase 1 — la reunificación depende de que el enlace llegue a la persona
+correcta) → una persona con cuenta entra al detalle y cambia el estado a `reunited` (comunitario, no
+solo el creador) → banner de cierre "🎉 ya volvió a casa" + el cambio queda en `AuditLog` para
+moderación si hiciera falta revertirlo.
 
 ## 8. Desarrollo local
 
@@ -808,10 +1111,14 @@ migraciones; el admin real se crea aparte con password generada.
   de reputación, confirmaciones y auditoría sigue funcionando sin tocar ni un solo otro módulo.
 - **El decay de confianza nunca se persiste**, se calcula al leer. Evita necesitar un job
   programado corriendo contra toda la tabla `Report` solo para mantener los números actualizados.
-- **Confirmar/denunciar/actualizar siguen pidiendo cuenta** aunque *publicar* ya no la pida — es
-  una decisión consciente, no un descuido: publicar es la acción que no se puede permitir perder
-  (alguien pidiendo ayuda en emergencia), mientras que actuar sobre el reporte de otro es una
-  acción secundaria donde mantener la barra de confianza más alta tiene más sentido.
+- **Confirmar tampoco pide cuenta desde hace poco — denunciar/actualizar/estado de necesidad sí
+  siguen pidiéndola.** El corte no es "publicar vs. todo lo demás": confirmar es la acción de
+  verificación más frecuente y de menor riesgo (solo suma un voto más, con el mismo límite de "una
+  vez por tipo por reporte" que ya existía), así que se le aplicó el mismo criterio que a publicar
+  — no perder a alguien real por pedirle una cuenta — reforzado con honeypot + rate limit propio +
+  reCAPTCHA en vez de la barrera de auth. Denunciar/actualizar/marcar estado de necesidad son
+  acciones con más impacto por intento (ocultar un reporte real, cambiar su estado visible) y
+  siguen detrás de `requireAuth` a propósito.
 - **Un guest se resuelve por email, y un email que ya es cuenta real bloquea el guest-flow (409).**
   Sin esto, cualquiera podría publicar reportes "como" otra persona con solo escribir su correo —
   la reputación de esa persona quedaría manipulable por terceros.
@@ -878,6 +1185,45 @@ migraciones; el admin real se crea aparte con password generada.
   público en `/reporte/:id` y en toda respuesta de la API — un código corto ganaría estética, no
   privacidad, y hubiera sido la "infraestructura nueva" que el documento fuente pide evitar por una
   ganancia cosmética.
+- **Mascotas no comparte tablas/servicios con reportes, solo dos extracciones a `lib/`.** Se evaluó
+  generalizar `ShareEvent`/`ShareCard` a polimórfico y se descartó — tocaría código de reportes que
+  ya funciona por una ganancia mínima a esta escala (dos módulos, no veinte). Lo único que sí se
+  extrajo (`cardRenderer.ts`, `guestIdentity.ts`) era código genérico de verdad, sin ninguna
+  referencia a `Report` en su lógica.
+- **`PetReport.hidden` es un campo separado de `PetReport.status`, a diferencia de `Report.status`**
+  (que sí mezcla moderación con vigencia). Se descubrió a mitad de implementación que los 9 valores
+  de `PetStatus` ya estaban completamente ocupados por significado de ciclo de vida — no había forma
+  de meter "oculto" ahí sin chocar con un estado real, así que se agregó una columna nueva vía una
+  segunda migración chica en vez de reabrir la primera ya aplicada.
+- **Cambiar el estado de una mascota escribe en `AuditLog`, aunque sigue siendo comunitario/abierto
+  (no restringido al creador).** Es la única diferencia real de este endpoint respecto a su análogo
+  de reportes (`updateNeedStatus`, que ni siquiera necesita esto porque ya deja rastro en el
+  timeline público) — se agregó porque "reunida" es la métrica norte del documento (la señal de que
+  el sistema cumplió su propósito), así que un cambio malicioso sin ningún remedio visible se juzgó
+  más grave acá que el caso análogo en reportes. No cambia quién puede hacer el cambio.
+- **`POST /api/pets` es multipart con la foto en el mismo request — el único endpoint de escritura
+  de todo el backend con esta forma.** Cada otro endpoint que sube un archivo lo hace como llamada
+  aparte (`POST /reports/:id/evidence`). Se decidió así porque el documento fuente pide
+  explícitamente un flujo de "menos de 60 segundos" con la foto como parte central, no un segundo
+  paso opcional que alguien angustiado buscando a su mascota podría no completar nunca.
+- **Los 4 estados de mascota (`lost`/`found`/`reunited`/`needs_help`) siempre generan pieza de
+  compartir, a diferencia de reportes** (donde solo 4 de 6 estados de confianza la generan). No es
+  una inconsistencia — mascotas no tiene ningún eje de confianza en Fase 1, así que no hay nada
+  análogo a "no glamorizar lo no confirmado" que filtrar. La contrapartida práctica: en un entorno
+  sin credenciales reales de `STORAGE_*` (como este dev local), literalmente cualquier llamada a
+  `GET /pets/:id/share-card` intenta subir a almacenamiento y falla — a diferencia de reportes, que
+  sí tiene un camino (`unconfirmed`) que nunca toca almacenamiento y por eso es testeable sin
+  credenciales reales. `PetShareSheet.tsx`/`getPublicPetPreview()` degradan con gracia igual (ver
+  4.7/6.13), solo que el caso "con imagen real" no se puede verificar end-to-end sin credenciales de
+  Supabase Storage reales — verificado a mano con un script suelto (mismo criterio que 4.6) en vez
+  de vía HTTP.
+- **Sin mecanismo de contacto directo entre quien reporta y quien encuentra/reconoce una mascota en
+  Fase 1** — confirmado explícitamente con el usuario durante la planeación, no una omisión. El
+  documento fuente tampoco lo especifica (lo deja abierto para una fase posterior). La reunificación
+  depende de que la pieza compartida por WhatsApp circule y llegue a la persona correcta, igual que
+  ya pasa hoy de forma orgánica en los grupos comunitarios — un mecanismo de contacto (revelar
+  correo/celular con advertencia, o "reportar posible coincidencia") queda como el primer punto de
+  Fase 2, junto con las confirmaciones comunitarias que esa fase agrega.
 
 ## 11. Subagentes de Claude Code en este repo (`.claude/agents/`)
 

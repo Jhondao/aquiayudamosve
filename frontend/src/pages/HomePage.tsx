@@ -6,7 +6,10 @@ import { ReportCard } from "../components/ReportCard";
 import { COLOMBIA_LOCATIONS } from "../data/colombiaLocations";
 import type { CategoryGroup, Report } from "../types";
 import { useAuth } from "../context/AuthContext";
+import { useGuestContact, type GuestContact } from "../context/GuestContactContext";
 import { PushToggle } from "../components/PushToggle";
+import { GuestConfirmModal } from "../components/GuestConfirmModal";
+import { getRecaptchaToken } from "../utils/recaptcha";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 // ACTUALIZACIÓN DEL PROMPT MAESTRO — zonas prioritarias del terremoto del 10
@@ -56,6 +59,7 @@ export default function HomePage() {
   useDocumentTitle("Ayuda comunitaria en Colombia");
 
   const [allReports, setAllReports] = useState<Report[]>([]);
+  const [petsCount, setPetsCount] = useState<number | null>(null);
   const [department, setDepartment] = useState("");
   const [municipality, setMunicipality] = useState("");
   const [nearMe, setNearMe] = useState<{ lat: number; lng: number } | null>(null);
@@ -66,6 +70,9 @@ export default function HomePage() {
   const [error, setError] = useState<string | null>(null);
   const navigate = useNavigate();
   const { profile } = useAuth();
+  const { guestContact, rememberGuestContact } = useGuestContact();
+  const [guestModalOpen, setGuestModalOpen] = useState(false);
+  const [pendingConfirmId, setPendingConfirmId] = useState<string | null>(null);
 
   const comoAyudarRef = useRef<HTMLDivElement>(null);
   const mapaRef = useRef<HTMLDivElement>(null);
@@ -97,6 +104,13 @@ export default function HomePage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [department, municipality, nearMe]);
+
+  useEffect(() => {
+    api
+      .getPetReports({ pageSize: 1 })
+      .then((res) => setPetsCount(res.total))
+      .catch(() => setPetsCount(null));
+  }, []);
 
   const municipalityOptions = COLOMBIA_LOCATIONS.find((d) => d.name === department)?.municipalities ?? [];
 
@@ -174,13 +188,43 @@ export default function HomePage() {
     listaRef.current?.scrollIntoView({ behavior: "smooth", block: "start" });
   }
 
+  // Confirmar no requiere cuenta (mismo criterio que publicar) — igual que
+  // en ReportDetailPage, solo pide nombre + correo/celular una vez por
+  // visita (GuestContactContext), nunca crea una cuenta ni pide contraseña.
   async function handleConfirm(id: string) {
-    if (!profile) return navigate("/login");
+    if (!profile && !guestContact) {
+      setPendingConfirmId(id);
+      setGuestModalOpen(true);
+      return;
+    }
+    await performConfirm(id, profile ? undefined : guestContact!);
+  }
+
+  async function performConfirm(id: string, contact?: GuestContact, honeypot?: string) {
     try {
-      const updated = await api.confirmReport(id, "confirm");
+      const guest = contact
+        ? {
+            displayName: contact.displayName,
+            email: contact.email,
+            phone: contact.phone,
+            recaptchaToken: await getRecaptchaToken("CONFIRM_REPORT"),
+            website: honeypot,
+          }
+        : undefined;
+      const updated = await api.confirmReport(id, "confirm", guest);
       setAllReports((prev) => prev.map((r) => (r.id === id ? updated : r)));
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo confirmar.");
+    }
+  }
+
+  async function handleGuestModalSubmit(contact: GuestContact, honeypot: string) {
+    rememberGuestContact(contact);
+    setGuestModalOpen(false);
+    if (pendingConfirmId) {
+      const id = pendingConfirmId;
+      setPendingConfirmId(null);
+      await performConfirm(id, contact, honeypot);
     }
   }
 
@@ -242,6 +286,24 @@ export default function HomePage() {
           <div className="text-lg font-extrabold">🚚 {stats.transporte}</div>
           <div className="text-xs text-slate-400">Solicitudes de transporte</div>
         </div>
+      </div>
+
+      {/* Mascotas */}
+      <div className="mt-8">
+        <button
+          onClick={() => navigate("/mascotas")}
+          className="flex w-full items-center justify-between gap-3 rounded-2xl border border-border bg-surface p-4 text-left hover:bg-surface2"
+        >
+          <div>
+            <h2 className="text-sm font-bold">🐾 Mascotas perdidas y encontradas</h2>
+            <p className="mt-1 text-xs text-slate-400">
+              {petsCount == null
+                ? "Ayúdanos a reunir mascotas con sus familias."
+                : `${petsCount} mascota${petsCount === 1 ? "" : "s"} reportada${petsCount === 1 ? "" : "s"} — ayúdanos a reunirlas con sus familias.`}
+            </p>
+          </div>
+          <span className="shrink-0 rounded-lg bg-accent px-3 py-2 text-xs font-bold text-white">Ver mascotas</span>
+        </button>
       </div>
 
       {/* Mapa */}
@@ -424,6 +486,15 @@ export default function HomePage() {
           ))}
         </div>
       </div>
+
+      <GuestConfirmModal
+        open={guestModalOpen}
+        onCancel={() => {
+          setGuestModalOpen(false);
+          setPendingConfirmId(null);
+        }}
+        onSubmit={handleGuestModalSubmit}
+      />
     </div>
   );
 }

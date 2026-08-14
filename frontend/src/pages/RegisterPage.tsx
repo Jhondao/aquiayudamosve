@@ -44,7 +44,14 @@ export default function RegisterPage() {
         className="mt-1 h-11 w-full rounded-xl border border-border bg-surface px-3 text-sm"
       />
       {error && <p className="mt-3 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
-      <button onClick={submit} disabled={submitting} className="mt-5 h-12 w-full rounded-xl bg-accent text-sm font-bold text-white disabled:opacity-50">
+      <p className="mt-4 text-[11px] text-slate-500">
+        Al crear tu cuenta aceptas nuestra{" "}
+        <Link to="/privacidad" className="underline hover:text-slate-300">
+          política de tratamiento de datos personales
+        </Link>
+        .
+      </p>
+      <button onClick={submit} disabled={submitting} className="mt-3 h-12 w-full rounded-xl bg-accent text-sm font-bold text-white disabled:opacity-50">
         {submitting ? "Creando…" : "CREAR CUENTA"}
       </button>
       <p className="mt-4 text-center text-xs text-slate-400">

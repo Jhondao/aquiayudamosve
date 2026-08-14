@@ -6,6 +6,7 @@ import { applyDecay, determineTrustLevel, recomputeReportTrustScore, trustLevelC
 import { rewardUsefulConfirmation } from "../trust/reputation.service";
 import { SENSITIVE_CATEGORY_KEYS, needStatusLabels, type NeedStatusValue, type CommitmentStatusValue } from "./reports.schemas";
 import { broadcastPush } from "../../lib/push";
+import { resolveGuestContact, syntheticEmailForPhone } from "../../lib/guestIdentity";
 
 const reportWithRelations = Prisma.validator<Prisma.ReportDefaultArgs>()({
   include: {
@@ -108,38 +109,6 @@ async function loadReport(id: string) {
   const report = await prisma.report.findUnique({ where: { id }, ...reportWithRelations });
   if (!report || report.deletedAt) throw new HttpError(404, "Reporte no encontrado.");
   return report;
-}
-
-/**
- * Publishing without a session is allowed (community-first: no signup wall
- * to ask for help or report). We still need a stable identity to attach the
- * report to for the trust/reputation system, so an email+phone pair either
- * reuses or creates a passwordless "guest" User. If the email already
- * belongs to a real account, we refuse — otherwise anyone could post under
- * someone else's identity just by typing their email.
- */
-async function resolveGuestContact(email: string, phone: string) {
-  const existing = await prisma.user.findUnique({ where: { email } });
-  if (existing) {
-    if (!existing.isGuest) {
-      throw new HttpError(409, "Ese correo ya tiene una cuenta. Inicia sesión para publicar con ella.");
-    }
-    if (existing.phone !== phone) {
-      await prisma.user.update({ where: { id: existing.id }, data: { phone } });
-    }
-    return existing.id;
-  }
-
-  const created = await prisma.user.create({
-    data: {
-      email,
-      phone,
-      isGuest: true,
-      displayName: email.split("@")[0],
-      reputation: { create: { score: 0, level: "nuevo" } },
-    },
-  });
-  return created.id;
 }
 
 export async function createReport(
@@ -276,7 +245,28 @@ export async function findNearbyReports(params: { lat: number; lng: number; radi
     .map((r) => serializeReport(r));
 }
 
-export async function confirmReport(reportId: string, userId: string, type: "confirm" | "unsure" | "incorrect") {
+/**
+ * Confirmar/dudoso/incorrecto no requiere cuenta — mismo criterio
+ * "comunitario, sin barrera" que ya aplica a publicar (ver
+ * resolveGuestContact arriba). Sin `actor.userId`, hace falta correo **o**
+ * celular (no ambos — a diferencia de publicar) más nombre; el guard vive
+ * aquí, no en el schema, mismo motivo que el resto de los .optional() de
+ * este archivo. Sin correo, se resuelve con syntheticEmailForPhone.
+ */
+export async function confirmReport(
+  reportId: string,
+  actor: { userId?: string; email?: string; phone?: string; displayName?: string },
+  type: "confirm" | "unsure" | "incorrect"
+) {
+  let userId = actor.userId;
+  if (!userId) {
+    if (!actor.email && !actor.phone) {
+      throw new HttpError(400, "Agrega tu nombre y tu correo o celular para confirmar sin cuenta.");
+    }
+    const email = actor.email ?? syntheticEmailForPhone(actor.phone!);
+    userId = await resolveGuestContact(email, actor.phone, actor.displayName);
+  }
+
   const report = await loadReport(reportId);
 
   try {

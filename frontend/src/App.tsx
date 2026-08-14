@@ -9,6 +9,10 @@ import LoginPage from "./pages/LoginPage";
 import RegisterPage from "./pages/RegisterPage";
 import ProfilePage from "./pages/ProfilePage";
 import AdminPage from "./pages/AdminPage";
+import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
+import PetsPage from "./pages/PetsPage";
+import PetReportPage from "./pages/PetReportPage";
+import PetDetailPage from "./pages/PetDetailPage";
 
 export default function App() {
   return (
@@ -24,6 +28,10 @@ export default function App() {
           <Route path="/registro" element={<RegisterPage />} />
           <Route path="/perfil" element={<ProfilePage />} />
           <Route path="/admin" element={<AdminPage />} />
+          <Route path="/privacidad" element={<PrivacyPolicyPage />} />
+          <Route path="/mascotas" element={<PetsPage />} />
+          <Route path="/mascotas/reportar" element={<PetReportPage />} />
+          <Route path="/mascotas/:id" element={<PetDetailPage />} />
         </Routes>
       </div>
       <Footer />

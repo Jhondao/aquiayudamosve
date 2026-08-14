@@ -1,14 +1,9 @@
-import { readFile } from "node:fs/promises";
-import path from "node:path";
-import satori from "satori";
-import sharp from "sharp";
-import QRCode from "qrcode";
 import { prisma } from "../../lib/prisma";
 import { env } from "../../config/env";
 import { uploadObject } from "../../lib/objectStorage";
 import { HttpError } from "../../middleware/errorHandler";
+import { box, qrDataUri, renderCardPng, truncate, type CardNode } from "../../lib/cardRenderer";
 import { applyDecay, determineTrustLevel, type TrustLevel } from "../trust/trustScore.service";
-import { needStatusLabels } from "../reports/reports.schemas";
 import type { ShareChannelValue } from "./share.schemas";
 
 export type ShareStatus = "confirmed" | "institutional" | "covered" | "surplus" | "questioned" | "unconfirmed";
@@ -40,34 +35,6 @@ const BADGE_STYLE: Record<ShareStatus, { label: string; color: string }> = {
   unconfirmed: { label: "AÚN SIN CONFIRMAR", color: COLORS.warn },
 };
 
-function truncate(text: string, max: number): string {
-  return text.length > max ? `${text.slice(0, max - 1).trimEnd()}…` : text;
-}
-
-// --- Fuentes (satori vectoriza el texto con las que le pasemos — nunca
-// depende de qué tenga instalado el contenedor, y nunca usamos glyphs que
-// puedan faltar en Inter: sin emoji, sin símbolos tipo ✓/◆/○). ---
-const FONTS_DIR = path.join(__dirname, "../../../assets/fonts");
-let fontsPromise: Promise<{ name: string; data: Buffer; weight: 400 | 700; style: "normal" }[]> | null = null;
-function loadFonts() {
-  if (!fontsPromise) {
-    fontsPromise = Promise.all([
-      readFile(path.join(FONTS_DIR, "Inter-Regular.ttf")),
-      readFile(path.join(FONTS_DIR, "Inter-Bold.ttf")),
-    ]).then(([regular, bold]) => [
-      { name: "Inter", data: regular, weight: 400 as const, style: "normal" as const },
-      { name: "Inter", data: bold, weight: 700 as const, style: "normal" as const },
-    ]);
-  }
-  return fontsPromise;
-}
-
-type Node = { type: string; props: Record<string, unknown> };
-
-function box(style: Record<string, unknown>, children?: Node | Node[] | string): Node {
-  return { type: "div", props: { style: { display: "flex", ...style }, children } };
-}
-
 interface CardData {
   categoryLabel: string;
   title: string;
@@ -79,7 +46,7 @@ interface CardData {
   shortUrlLabel: string;
 }
 
-function buildCardTree(data: CardData): Node {
+function buildCardTree(data: CardData): CardNode {
   const badge = BADGE_STYLE[data.status];
 
   return box(
@@ -317,20 +284,8 @@ function buildNeedLine(status: ShareStatus, report: ShareableReportRow): string 
   return null;
 }
 
-async function qrDataUri(url: string): Promise<string> {
-  const png = await QRCode.toBuffer(url, {
-    type: "png",
-    width: 320,
-    margin: 1,
-    color: { dark: "#111318ff", light: "#ffffffff" },
-  });
-  return `data:image/png;base64,${png.toString("base64")}`;
-}
-
 async function renderAndUploadCard(reportId: string, cacheKey: string, data: CardData): Promise<string> {
-  const fonts = await loadFonts();
-  const svg = await satori(buildCardTree(data) as never, { width: 1080, height: 1350, fonts });
-  const png = await sharp(Buffer.from(svg)).png().toBuffer();
+  const png = await renderCardPng(buildCardTree(data), 1080, 1350);
   const hash = cacheKey.replace(/[^a-zA-Z0-9]/g, "").slice(-16);
   const key = `share-cards/${reportId}-${hash}.png`;
   return uploadObject(key, png, "image/png");

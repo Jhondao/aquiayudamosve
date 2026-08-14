@@ -1,4 +1,20 @@
-import type { Category, CommitmentStatus, NeedStatus, Profile, Report, ShareCard, ShareChannel } from "../types";
+import type {
+  Category,
+  CommitmentStatus,
+  NeedStatus,
+  PetHelpCategory,
+  PetReport,
+  PetReportType,
+  PetShareCard,
+  PetSex,
+  PetSize,
+  PetSpecies,
+  PetStatus,
+  Profile,
+  Report,
+  ShareCard,
+  ShareChannel,
+} from "../types";
 
 // Kept in memory only — never localStorage/sessionStorage, so an XSS payload
 // reading storage can't lift a long-lived credential. Refresh token lives in
@@ -130,8 +146,11 @@ export const api = {
     email?: string;
     phone?: string;
   }) => request<Report>("/api/reports", { method: "POST", body: JSON.stringify(data) }),
-  confirmReport: (id: string, type: "confirm" | "unsure" | "incorrect") =>
-    request<Report>(`/api/reports/${id}/confirm`, { method: "POST", body: JSON.stringify({ type }) }),
+  confirmReport: (
+    id: string,
+    type: "confirm" | "unsure" | "incorrect",
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<Report>(`/api/reports/${id}/confirm`, { method: "POST", body: JSON.stringify({ type, ...guest }) }),
   flagReport: (id: string, reason: string) =>
     request<Report>(`/api/reports/${id}/flag`, { method: "POST", body: JSON.stringify({ reason }) }),
   addUpdate: (id: string, text: string, deactivates?: boolean) =>
@@ -183,6 +202,117 @@ export const api = {
   getPushPublicKey: () => request<{ publicKey: string }>("/api/push/vapid-public-key"),
   pushSubscribe: (sub: PushSubscriptionJSON) => request<{ ok: true }>("/api/push/subscribe", { method: "POST", body: JSON.stringify(sub) }),
   pushUnsubscribe: (endpoint: string) => request<{ ok: true }>("/api/push/unsubscribe", { method: "POST", body: JSON.stringify({ endpoint }) }),
+
+  // Mascotas — POST /api/pets es multipart (la foto viaja en el mismo
+  // request, no como paso aparte) así que arma su propio FormData en vez de
+  // JSON.stringify. Pasa por request() igual que todo lo demás, NUNCA un
+  // fetch crudo — ese helper ya adjunta el header Authorization incluso con
+  // body FormData (solo omite fijar Content-Type, que el navegador debe
+  // completar solo con el boundary correcto).
+  createPetReport: (
+    data: {
+      reportType: PetReportType;
+      species: PetSpecies;
+      name?: string;
+      breed?: string;
+      sex?: PetSex;
+      size?: PetSize;
+      primaryColor?: string;
+      distinctiveFeatures?: string;
+      description: string;
+      departmentName: string;
+      municipalityName: string;
+      localityName?: string;
+      locationSource: "gps" | "catalog" | "manual";
+      approxLocationText?: string;
+      lat: number;
+      lng: number;
+      happenedAt?: string;
+      isSheltered?: boolean;
+      helpCategory?: PetHelpCategory;
+      isEmergency?: boolean;
+      displayName?: string;
+      email?: string;
+      phone?: string;
+      recaptchaToken?: string | null;
+      website?: string;
+    },
+    photo?: File | null
+  ) => {
+    const form = new FormData();
+    const append = (key: string, value: string | number | undefined | null) => {
+      if (value === undefined || value === null || value === "") return;
+      form.append(key, String(value));
+    };
+    append("reportType", data.reportType);
+    append("species", data.species);
+    append("name", data.name);
+    append("breed", data.breed);
+    append("sex", data.sex);
+    append("size", data.size);
+    append("primaryColor", data.primaryColor);
+    append("distinctiveFeatures", data.distinctiveFeatures);
+    append("description", data.description);
+    append("departmentName", data.departmentName);
+    append("municipalityName", data.municipalityName);
+    append("localityName", data.localityName);
+    append("locationSource", data.locationSource);
+    append("approxLocationText", data.approxLocationText);
+    append("lat", data.lat);
+    append("lng", data.lng);
+    append("happenedAt", data.happenedAt);
+    // Explícitos siempre (no omitidos) — booleanString en el backend lee el
+    // string literal "true"/"false", nunca Boolean(str).
+    form.append("isSheltered", data.isSheltered ? "true" : "false");
+    append("helpCategory", data.helpCategory);
+    form.append("isEmergency", data.isEmergency ? "true" : "false");
+    append("displayName", data.displayName);
+    append("email", data.email);
+    append("phone", data.phone);
+    append("recaptchaToken", data.recaptchaToken ?? undefined);
+    if (photo) form.append("photo", photo);
+    return request<PetReport>("/api/pets", { method: "POST", body: form });
+  },
+  getPetReports: (
+    params: {
+      reportType?: PetReportType;
+      species?: PetSpecies;
+      status?: PetStatus;
+      departmentName?: string;
+      municipalityName?: string;
+      page?: number;
+      pageSize?: number;
+    } = {}
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.reportType) qs.set("reportType", params.reportType);
+    if (params.species) qs.set("species", params.species);
+    if (params.status) qs.set("status", params.status);
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
+    if (params.page) qs.set("page", String(params.page));
+    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
+    return request<{ pets: PetReport[]; total: number; page: number; pageSize: number }>(`/api/pets?${qs.toString()}`);
+  },
+  getPetReport: (id: string) => request<PetReport>(`/api/pets/${id}`),
+  updatePetStatus: (id: string, data: { status: PetStatus; note?: string }) =>
+    request<PetReport>(`/api/pets/${id}/status`, { method: "PATCH", body: JSON.stringify(data) }),
+
+  getPetShareCard: (id: string) => request<PetShareCard>(`/api/pets/${id}/share-card`),
+  recordPetShareEvent: (id: string, channel: ShareChannel) =>
+    request<{ ok: true }>(`/api/pets/${id}/share-event`, { method: "POST", body: JSON.stringify({ channel }) }),
+
+  getAllPets: (params: { departmentName?: string; municipalityName?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
+    return request<{ pets: (PetReport & { hidden: boolean })[] }>(`/api/admin/pets?${qs.toString()}`);
+  },
+  moderatePet: (id: string, action: "hide" | "unhide" | "delete", reason: string) =>
+    request<(PetReport & { hidden: boolean }) | null>(`/api/admin/pets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ action, reason }),
+    }),
 };
 
 export { ApiError };

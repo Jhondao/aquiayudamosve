@@ -2,11 +2,14 @@ import { useEffect, useState } from "react";
 import { useNavigate, useParams } from "react-router-dom";
 import { api, ApiError } from "../api/client";
 import { useAuth } from "../context/AuthContext";
+import { useGuestContact, type GuestContact } from "../context/GuestContactContext";
 import { GROUP_META } from "../components/categoryStyle";
 import { NEED_STATUS_META } from "../components/needStatusStyle";
 import { TrustBadge } from "../components/TrustBadge";
 import { ShareSheet } from "../components/ShareSheet";
+import { GuestConfirmModal } from "../components/GuestConfirmModal";
 import { relativeTime } from "../utils/time";
+import { getRecaptchaToken } from "../utils/recaptcha";
 import type { CommitmentStatus, NeedStatus, Report } from "../types";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
@@ -40,6 +43,7 @@ const NEED_STATUS_OPTIONS: { value: NeedStatus; label: string }[] = [
 export default function ReportDetailPage() {
   const { id } = useParams<{ id: string }>();
   const { profile } = useAuth();
+  const { guestContact, rememberGuestContact } = useGuestContact();
   const navigate = useNavigate();
   const [report, setReport] = useState<Report | null>(null);
   const [error, setError] = useState<string | null>(null);
@@ -55,6 +59,8 @@ export default function ReportDetailPage() {
   const [commitTransport, setCommitTransport] = useState("");
   const [shareOpen, setShareOpen] = useState(false);
   const [shareBanner, setShareBanner] = useState<{ message: string; cta: string } | null>(null);
+  const [guestModalOpen, setGuestModalOpen] = useState(false);
+  const [pendingConfirmType, setPendingConfirmType] = useState<"confirm" | "unsure" | "incorrect" | null>(null);
 
   // Título dinámico solo para el <title> de la pestaña / historial del
   // navegador y para Googlebot (que sí ejecuta JS antes de indexar). Los
@@ -113,18 +119,59 @@ export default function ReportDetailPage() {
     });
   }
 
-  async function confirmReportAndOfferShare() {
-    const wasConfirmed = report != null && CONFIRMED_LEVELS.has(report.trustLevel);
-    await guardedAction(async () => {
-      const updated = await api.confirmReport(report!.id, "confirm");
+  // Confirmar/marcar dudoso/marcar incorrecto no requiere cuenta (mismo
+  // criterio que publicar sin cuenta). No pasa por guardedAction a
+  // propósito: ese helper redirige a /login, que es justo la barrera que
+  // esta acción ya no debe tener — nunca se crea una cuenta ni se pide
+  // contraseña, solo se resuelve una identidad guest (ver
+  // reports.service.ts#resolveGuestContact). El nombre/correo/celular se
+  // piden una sola vez por visita vía GuestContactContext — si ya se dieron
+  // antes (en esta página o en la lista del home), no se vuelven a pedir.
+  async function confirmAsGuestOrUser(type: "confirm" | "unsure" | "incorrect") {
+    if (!report) return;
+    if (!profile && !guestContact) {
+      setPendingConfirmType(type);
+      setGuestModalOpen(true);
+      return;
+    }
+    await performConfirm(type, profile ? undefined : guestContact!);
+  }
+
+  async function performConfirm(type: "confirm" | "unsure" | "incorrect", contact?: GuestContact, honeypot?: string) {
+    if (!report) return;
+    setError(null);
+    const wasConfirmed = CONFIRMED_LEVELS.has(report.trustLevel);
+    try {
+      const guest = contact
+        ? {
+            displayName: contact.displayName,
+            email: contact.email,
+            phone: contact.phone,
+            recaptchaToken: await getRecaptchaToken("CONFIRM_REPORT"),
+            website: honeypot,
+          }
+        : undefined;
+      const updated = await api.confirmReport(report.id, type, guest);
       setReport(updated);
-      if (!wasConfirmed && CONFIRMED_LEVELS.has(updated.trustLevel)) {
+      if (type === "confirm" && !wasConfirmed && CONFIRMED_LEVELS.has(updated.trustLevel)) {
         setShareBanner({
           message: "Este reporte ya está confirmado por la comunidad.",
           cta: "Compartir con mi comunidad",
         });
       }
-    });
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo completar la acción.");
+    }
+  }
+
+  async function handleGuestModalSubmit(contact: GuestContact, honeypot: string) {
+    rememberGuestContact(contact);
+    setGuestModalOpen(false);
+    if (pendingConfirmType) {
+      const type = pendingConfirmType;
+      setPendingConfirmType(null);
+      await performConfirm(type, contact, honeypot);
+    }
   }
 
   async function markCoveredAndOfferShare() {
@@ -222,19 +269,19 @@ export default function ReportDetailPage() {
 
       <div className="mt-4 flex flex-wrap gap-2">
         <button
-          onClick={confirmReportAndOfferShare}
+          onClick={() => confirmAsGuestOrUser("confirm")}
           className="rounded-xl bg-accent px-4 py-2.5 text-sm font-bold text-white"
         >
           ✓ CONFIRMAR
         </button>
         <button
-          onClick={() => guardedAction(async () => setReport(await api.confirmReport(report.id, "unsure")))}
+          onClick={() => confirmAsGuestOrUser("unsure")}
           className="rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-semibold"
         >
           NO ESTOY SEGURO
         </button>
         <button
-          onClick={() => guardedAction(async () => setReport(await api.confirmReport(report.id, "incorrect")))}
+          onClick={() => confirmAsGuestOrUser("incorrect")}
           className="rounded-xl border border-border bg-surface px-4 py-2.5 text-sm font-semibold"
         >
           REPORTAR INCORRECTO
@@ -519,6 +566,14 @@ export default function ReportDetailPage() {
       </div>
 
       <ShareSheet reportId={report.id} open={shareOpen} onClose={() => setShareOpen(false)} />
+      <GuestConfirmModal
+        open={guestModalOpen}
+        onCancel={() => {
+          setGuestModalOpen(false);
+          setPendingConfirmType(null);
+        }}
+        onSubmit={handleGuestModalSubmit}
+      />
     </div>
   );
 }

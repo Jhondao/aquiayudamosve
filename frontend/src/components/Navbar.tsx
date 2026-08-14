@@ -24,6 +24,9 @@ export function Navbar() {
       <NavLink to="/reportar" className={linkClass} onClick={() => setOpen(false)}>
         Reportar
       </NavLink>
+      <NavLink to="/mascotas" className={linkClass} onClick={() => setOpen(false)}>
+        🐾 Mascotas
+      </NavLink>
       {profile && (profile.role === "moderator" || profile.role === "admin") && (
         <NavLink to="/admin" className={linkClass} onClick={() => setOpen(false)}>
           Panel admin

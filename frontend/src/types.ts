@@ -106,3 +106,57 @@ export interface Profile {
   organization: { name: string; verified: boolean } | null;
   createdAt: string;
 }
+
+export type PetReportType = "lost" | "found" | "injured" | "needs_help";
+export type PetSpecies = "dog" | "cat" | "bird" | "rabbit" | "horse" | "other";
+export type PetSex = "male" | "female" | "unknown";
+export type PetSize = "small" | "medium" | "large";
+export type PetStatus =
+  | "lost"
+  | "sighted"
+  | "sheltered"
+  | "possible_match"
+  | "found"
+  | "reunited"
+  | "needs_help"
+  | "closed"
+  | "outdated";
+export type PetHelpCategory = "veterinary" | "food" | "water" | "transport" | "shelter" | "rescue" | "other";
+
+export interface PetReport {
+  id: string;
+  reportType: PetReportType;
+  species: PetSpecies;
+  name: string | null;
+  breed: string | null;
+  sex: PetSex;
+  size: PetSize | null;
+  primaryColor: string | null;
+  distinctiveFeatures: string | null;
+  description: string;
+  imageUrl: string | null;
+  status: PetStatus;
+  helpCategory: PetHelpCategory | null;
+  isEmergency: boolean | null;
+  departmentName: string;
+  municipalityName: string;
+  localityName: string | null;
+  approxLocationText: string | null;
+  lat: number;
+  lng: number;
+  locationSource: LocationSource;
+  happenedAt: string | null;
+  isSheltered: boolean;
+  createdById: string;
+  createdAt: string;
+  lastConfirmedAt: string;
+}
+
+export type PetShareStatus = "lost" | "found" | "reunited" | "needs_help";
+
+export interface PetShareCard {
+  imageUrl: string | null;
+  shareUrl: string;
+  whatsappText: string;
+  status: PetShareStatus;
+}
