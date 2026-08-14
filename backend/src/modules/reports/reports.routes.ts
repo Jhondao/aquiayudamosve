@@ -62,8 +62,8 @@ router.get("/:id", async (req, res, next) => {
 // No requireAuth: publishing must not require an account (see reports.service.ts#resolveGuestContact).
 router.post("/", createReportLimiter, validateBody(createReportSchema), async (req, res, next) => {
   try {
-    const { email, phone, ...input } = req.body;
-    res.status(201).json(await createReport({ userId: req.user?.id, email, phone }, input));
+    const { email, phone, displayName, ...input } = req.body;
+    res.status(201).json(await createReport({ userId: req.user?.id, email, phone, displayName }, input));
   } catch (err) {
     next(err);
   }

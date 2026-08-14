@@ -112,7 +112,7 @@ async function loadReport(id: string) {
 }
 
 export async function createReport(
-  actor: { userId?: string; email?: string; phone?: string },
+  actor: { userId?: string; email?: string; phone?: string; displayName?: string },
   input: {
     categoryKey: string;
     title: string;
@@ -130,10 +130,14 @@ export async function createReport(
 ) {
   let userId = actor.userId;
   if (!userId) {
-    if (!actor.email || !actor.phone) {
-      throw new HttpError(400, "Agrega tu correo y celular para publicar sin cuenta.");
+    // Antes exigía correo Y celular juntos — se relajó a "uno de los dos"
+    // para igualar el resto de la app (confirmar, mascotas), que nunca pide
+    // ambos. Mismo fallback de correo sintético que ya usan esos flujos.
+    if (!actor.email && !actor.phone) {
+      throw new HttpError(400, "Agrega tu nombre y tu correo o celular para publicar sin cuenta.");
     }
-    userId = await resolveGuestContact(actor.email, actor.phone);
+    const email = actor.email ?? syntheticEmailForPhone(actor.phone!);
+    userId = await resolveGuestContact(email, actor.phone, actor.displayName);
   }
 
   const category = await prisma.reportCategory.findUnique({ where: { key: input.categoryKey } });
