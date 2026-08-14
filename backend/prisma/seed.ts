@@ -35,6 +35,7 @@ const CATEGORIES: { group: "ayuda" | "necesidad" | "critico" | "info"; key: stri
   { group: "critico", key: "fuga_gas", label: "Fuga de gas", sortOrder: 7 },
   { group: "critico", key: "cableado_electrico", label: "Cableado eléctrico", sortOrder: 8 },
   { group: "critico", key: "zona_peligrosa", label: "Zona peligrosa", sortOrder: 9 },
+  { group: "critico", key: "otro_critico", label: "Otro", sortOrder: 10 },
   // Información
   { group: "info", key: "hospital_operativo", label: "Hospital operativo", sortOrder: 1 },
   { group: "info", key: "hospital_saturado", label: "Hospital saturado", sortOrder: 2 },
