@@ -21,6 +21,7 @@ export default function NeedHelpPage() {
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
+  const [displayName, setDisplayName] = useState("");
   const [email, setEmail] = useState("");
   const [phone, setPhone] = useState("");
   const [quantityNeeded, setQuantityNeeded] = useState("");
@@ -38,8 +39,8 @@ export default function NeedHelpPage() {
       setError("Selecciona el tipo de necesidad y marca dónde, incluyendo el punto en el mapa.");
       return;
     }
-    if (!profile && (!email.trim() || !phone.trim())) {
-      setError("Agrega tu correo y celular, o inicia sesión.");
+    if (!profile && (!displayName.trim() || (!email.trim() && !phone.trim()))) {
+      setError("Agrega tu nombre y tu correo o celular, o inicia sesión.");
       return;
     }
     setSubmitting(true);
@@ -57,7 +58,9 @@ export default function NeedHelpPage() {
         lat: location.lat,
         lng: location.lng,
         ...(quantityNeeded.trim() ? { quantityNeeded: Number(quantityNeeded), quantityUnit: quantityUnit.trim() || undefined } : {}),
-        ...(profile ? {} : { email: email.trim(), phone: phone.trim() }),
+        ...(profile
+          ? {}
+          : { displayName: displayName.trim(), email: email.trim() || undefined, phone: phone.trim() || undefined }),
       });
       setSubmitted(true);
       setTimeout(() => navigate("/"), 1200);
@@ -141,7 +144,17 @@ export default function NeedHelpPage() {
         <LocationSelector value={location} onChange={setLocation} />
       </div>
 
-      {!profile && <GuestContactFields email={email} setEmail={setEmail} phone={phone} setPhone={setPhone} />}
+      {!profile && (
+        <GuestContactFields
+          email={email}
+          setEmail={setEmail}
+          phone={phone}
+          setPhone={setPhone}
+          displayName={displayName}
+          setDisplayName={setDisplayName}
+          phoneRequired={false}
+        />
+      )}
 
       {error && <p className="mt-4 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
 

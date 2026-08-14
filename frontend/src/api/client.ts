@@ -143,6 +143,7 @@ export const api = {
     lng: number;
     quantityNeeded?: number;
     quantityUnit?: string;
+    displayName?: string;
     email?: string;
     phone?: string;
   }) => request<Report>("/api/reports", { method: "POST", body: JSON.stringify(data) }),
