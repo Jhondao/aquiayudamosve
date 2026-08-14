@@ -5,6 +5,8 @@ import type {
   PetHelpCategory,
   PetReport,
   PetReportType,
+  PetResource,
+  PetResourceCategory,
   PetShareCard,
   PetSex,
   PetSighting,
@@ -332,6 +334,43 @@ export const api = {
   },
   moderatePet: (id: string, action: "hide" | "unhide" | "delete", reason: string) =>
     request<(PetReport & { hidden: boolean }) | null>(`/api/admin/pets/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ action, reason }),
+    }),
+
+  // Fase 3 — directorio "quiero ayudar con mascotas".
+  createPetResource: (data: {
+    category: PetResourceCategory;
+    name: string;
+    description: string;
+    contactName: string;
+    contactEmail?: string;
+    contactPhone?: string;
+    departmentName: string;
+    municipalityName: string;
+    availabilityNote?: string;
+  }) => request<PetResource>("/api/pets/resources", { method: "POST", body: JSON.stringify(data) }),
+  getPetResources: (
+    params: { category?: PetResourceCategory; departmentName?: string; municipalityName?: string; page?: number; pageSize?: number } = {}
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.category) qs.set("category", params.category);
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
+    if (params.page) qs.set("page", String(params.page));
+    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
+    return request<{ resources: PetResource[]; total: number; page: number; pageSize: number }>(`/api/pets/resources?${qs.toString()}`);
+  },
+  getPetResource: (id: string) => request<PetResource>(`/api/pets/resources/${id}`),
+
+  getAllPetResources: (params: { departmentName?: string; municipalityName?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
+    return request<{ resources: (PetResource & { hidden: boolean })[] }>(`/api/admin/pet-resources?${qs.toString()}`);
+  },
+  moderatePetResource: (id: string, action: "hide" | "unhide" | "delete", reason: string) =>
+    request<(PetResource & { hidden: boolean }) | null>(`/api/admin/pet-resources/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ action, reason }),
     }),

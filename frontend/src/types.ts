@@ -180,6 +180,25 @@ export interface RevealedPetContact {
   phone?: string;
 }
 
+// "Quiero ayudar con mascotas", Fase 3 — distinto de PetHelpCategory (esto
+// describe oferta, no demanda), aunque los valores mayormente se reflejen.
+export type PetResourceCategory = "veterinary" | "transport" | "temporary_home" | "attention_point" | "rescue" | "other";
+
+export interface PetResource {
+  id: string;
+  category: PetResourceCategory;
+  name: string;
+  description: string;
+  contactName: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  departmentName: string;
+  municipalityName: string;
+  availabilityNote: string | null;
+  createdById: string;
+  createdAt: string;
+}
+
 export type PetShareStatus = "lost" | "found" | "reunited" | "needs_help";
 
 export interface PetShareCard {

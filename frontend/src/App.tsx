@@ -13,6 +13,8 @@ import PrivacyPolicyPage from "./pages/PrivacyPolicyPage";
 import PetsPage from "./pages/PetsPage";
 import PetReportPage from "./pages/PetReportPage";
 import PetDetailPage from "./pages/PetDetailPage";
+import PetResourcesPage from "./pages/PetResourcesPage";
+import PetResourceFormPage from "./pages/PetResourceFormPage";
 
 export default function App() {
   return (
@@ -31,6 +33,8 @@ export default function App() {
           <Route path="/privacidad" element={<PrivacyPolicyPage />} />
           <Route path="/mascotas" element={<PetsPage />} />
           <Route path="/mascotas/reportar" element={<PetReportPage />} />
+          <Route path="/mascotas/ayudar" element={<PetResourcesPage />} />
+          <Route path="/mascotas/ayudar/nuevo" element={<PetResourceFormPage />} />
           <Route path="/mascotas/:id" element={<PetDetailPage />} />
         </Routes>
       </div>

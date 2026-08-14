@@ -1,4 +1,4 @@
-import type { PetHelpCategory, PetReportType, PetSpecies, PetStatus } from "../types";
+import type { PetHelpCategory, PetReportType, PetResourceCategory, PetSpecies, PetStatus } from "../types";
 
 // A diferencia de needStatusStyle.ts, acá el texto SÍ vive en el frontend —
 // pets.service.ts#serializePetReport nunca calculó labels (no hay eje de
@@ -39,4 +39,27 @@ export const PET_HELP_CATEGORY_LABEL: Record<PetHelpCategory, string> = {
   shelter: "Refugio temporal",
   rescue: "Rescate",
   other: "Otro",
+};
+
+export const PET_RESOURCE_CATEGORY_META: Record<PetResourceCategory, { emoji: string; label: string }> = {
+  veterinary: { emoji: "🏥", label: "Atención veterinaria" },
+  transport: { emoji: "🚚", label: "Transporte" },
+  temporary_home: { emoji: "🏠", label: "Hogar temporal" },
+  attention_point: { emoji: "📍", label: "Punto de atención" },
+  rescue: { emoji: "🚨", label: "Rescate" },
+  other: { emoji: "🐾", label: "Otro" },
+};
+
+// Fase 3 — qué categoría de recurso (oferta) responde mejor a cada
+// categoría de ayuda que pide una mascota needs_help/injured (demanda). No
+// son el mismo enum (uno describe oferta, el otro demanda) así que "food"/
+// "water" no tienen equivalente 1:1 — caen a "punto de atención".
+export const HELP_TO_RESOURCE_CATEGORY: Record<PetHelpCategory, PetResourceCategory> = {
+  veterinary: "veterinary",
+  food: "attention_point",
+  water: "attention_point",
+  transport: "transport",
+  shelter: "temporary_home",
+  rescue: "rescue",
+  other: "other",
 };

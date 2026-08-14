@@ -5,11 +5,18 @@ import { useAuth } from "../context/AuthContext";
 import { useGuestContact, type GuestContact } from "../context/GuestContactContext";
 import { GuestConfirmModal } from "../components/GuestConfirmModal";
 import { PetStatusBadge } from "../components/PetStatusBadge";
-import { PET_HELP_CATEGORY_LABEL, PET_REPORT_TYPE_LABEL, PET_SPECIES_META, PET_STATUS_META } from "../components/petStatusStyle";
+import {
+  HELP_TO_RESOURCE_CATEGORY,
+  PET_HELP_CATEGORY_LABEL,
+  PET_REPORT_TYPE_LABEL,
+  PET_RESOURCE_CATEGORY_META,
+  PET_SPECIES_META,
+  PET_STATUS_META,
+} from "../components/petStatusStyle";
 import { PetShareSheet } from "../components/PetShareSheet";
 import { getRecaptchaToken } from "../utils/recaptcha";
 import { relativeTime } from "../utils/time";
-import type { PetReport, PetSighting, PetStatus, PossibleMatch, RevealedPetContact } from "../types";
+import type { PetReport, PetResource, PetSighting, PetStatus, PossibleMatch, RevealedPetContact } from "../types";
 import { useDocumentTitle } from "../hooks/useDocumentTitle";
 
 // Fase 2 agrega possible_match a las opciones — Fase 1 lo excluía a
@@ -61,6 +68,9 @@ export default function PetDetailPage() {
   const [guestModalOpen, setGuestModalOpen] = useState(false);
   const [pendingAction, setPendingAction] = useState<PendingAction | null>(null);
 
+  // Fase 3
+  const [matchingResources, setMatchingResources] = useState<PetResource[]>([]);
+
   useDocumentTitle(pet?.name ?? "Detalle de mascota");
 
   async function load() {
@@ -84,6 +94,20 @@ export default function PetDetailPage() {
     load();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [id]);
+
+  // Recursos que podrían ayudar (Fase 3) — solo tiene sentido cuando el
+  // reporte ya trae un helpCategory (needs_help/injured), y se resuelve
+  // después de que el pet cargue (no se conoce la categoría antes).
+  useEffect(() => {
+    if (!pet?.helpCategory) {
+      setMatchingResources([]);
+      return;
+    }
+    api
+      .getPetResources({ category: HELP_TO_RESOURCE_CATEGORY[pet.helpCategory], departmentName: pet.departmentName, pageSize: 6 })
+      .then((res) => setMatchingResources(res.resources))
+      .catch(() => setMatchingResources([]));
+  }, [pet?.helpCategory, pet?.departmentName]);
 
   async function submitStatus() {
     if (!pet) return;
@@ -371,6 +395,31 @@ export default function PetDetailPage() {
                   </div>
                   <span className="shrink-0 text-xs text-slate-400">{(m.distanceMeters / 1000).toFixed(1)} km</span>
                 </Link>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
+      {matchingResources.length > 0 && (
+        <div className="mt-6">
+          <h2 className="text-xs font-bold uppercase tracking-wide text-slate-400">Recursos que podrían ayudar</h2>
+          <div className="mt-2 flex flex-col gap-2">
+            {matchingResources.map((r) => {
+              const meta = PET_RESOURCE_CATEGORY_META[r.category];
+              return (
+                <div key={r.id} className="rounded-xl border border-border bg-surface p-3 text-sm">
+                  <span className="w-fit rounded-full bg-accent/20 px-2 py-0.5 text-[10px] font-bold text-accent">
+                    {meta.emoji} {meta.label}
+                  </span>
+                  <p className="mt-1 font-semibold">{r.name}</p>
+                  <p className="text-xs text-slate-400">{r.municipalityName}, {r.departmentName}</p>
+                  {r.contactPhone && (
+                    <a href={`tel:${r.contactPhone}`} className="mt-1 block text-xs text-accent underline">
+                      {r.contactPhone}
+                    </a>
+                  )}
+                </div>
               );
             })}
           </div>
