@@ -156,6 +156,23 @@ export async function createPetReport(
     url: `/mascotas/${pet.id}`,
   }).catch(() => {});
 
+  // Alertas de cercanía, Fase 4 — bajo la opción elegida (reusar
+  // broadcastPush tal cual, sin push dirigido por usuario/ubicación, ver
+  // plan), la única pieza nueva es esta: si el reporte recién creado tiene
+  // una posible coincidencia ya esperando, un segundo push distinto — nunca
+  // más de uno por creación sin importar cuántos matches haya, y nunca
+  // esperado (fire-and-forget, mismo .catch(() => {}) que el de arriba).
+  findPossibleMatches(pet, { sameType: false })
+    .then((matches) => {
+      if (matches.length === 0) return;
+      return broadcastPush({
+        title: "🐾 Podría haber una coincidencia",
+        body: `Hay una mascota reportada cerca de ${pet.municipalityName}, ${pet.departmentName} que podría coincidir.`,
+        url: `/mascotas/${pet.id}`,
+      });
+    })
+    .catch(() => {});
+
   return serializePetReport(pet);
 }
 
@@ -469,4 +486,76 @@ export async function revealPetContact(
   });
 
   return { displayName: creator.displayName, email, phone: creator.phone ?? undefined };
+}
+
+/**
+ * Fase 4 — pares de posibles duplicados (mismo lado del ciclo de vida:
+ * lost↔lost o found↔found/sighted/sheltered), bajo demanda desde el panel
+ * de moderación — nunca eager en cada carga de AdminPage, dado el costo de
+ * escanear pares. Reusa el mismo motor que findPossibleMatches, solo con
+ * sameType: true.
+ */
+export async function findDuplicatePets() {
+  const candidates = await prisma.petReport.findMany({
+    where: {
+      deletedAt: null,
+      hidden: false,
+      status: { in: [...LOST_SIDE_STATUSES, ...FOUND_SIDE_STATUSES] },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+
+  const seen = new Set<string>();
+  const pairs: { a: ReturnType<typeof serializePetReport>; b: ReturnType<typeof serializePetReport>; distanceMeters: number }[] = [];
+
+  for (const pet of candidates) {
+    // eslint-disable-next-line no-await-in-loop
+    const matches = await findPossibleMatches(pet, { sameType: true });
+    for (const match of matches) {
+      const key = [pet.id, match.id].sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const { distanceMeters, ...matchPet } = match;
+      pairs.push({ a: serializePetReport(pet), b: matchPet, distanceMeters });
+    }
+  }
+
+  return pairs;
+}
+
+/**
+ * Fusión de duplicados, Fase 4 — soft-delete del no-primario + AuditLog,
+ * reusa mecanismos que ya existen. Sin mergedIntoId persistido para
+ * redirect a propósito: no existe ningún flujo de "deshacer" para delete en
+ * todo el backend (ni reportes ni mascotas), así que un link a un reporte
+ * fusionado da 404 igual que cualquier otro soft-delete hoy.
+ */
+export async function mergePetReports(adminId: string, id: string, intoId: string, reason: string) {
+  if (id === intoId) throw new HttpError(400, "No puedes fusionar un reporte consigo mismo.");
+
+  const [pet, into] = await Promise.all([
+    prisma.petReport.findUnique({ where: { id } }),
+    prisma.petReport.findUnique({ where: { id: intoId } }),
+  ]);
+  if (!pet || pet.deletedAt) throw new HttpError(404, "Reporte de mascota no encontrado.");
+  if (!into || into.deletedAt) throw new HttpError(404, "Reporte de mascota destino no encontrado.");
+  // Guard contra fusionar mascotas no relacionadas por error.
+  if (pet.species !== into.species) {
+    throw new HttpError(400, "Solo se pueden fusionar reportes de la misma especie.");
+  }
+
+  await prisma.petReport.update({ where: { id }, data: { deletedAt: new Date() } });
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: adminId,
+      action: "pet.moderation.merge",
+      entityType: "pet_report",
+      entityId: id,
+      metadata: { mergedIntoId: intoId, reason },
+    },
+  });
+
+  return { ...serializePetReport(into), hidden: into.hidden };
 }

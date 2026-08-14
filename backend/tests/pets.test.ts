@@ -787,6 +787,125 @@ describe("Rate limit de revelar contacto (Fase 2)", () => {
   });
 });
 
+describe("Detección de duplicados y fusión (Fase 4)", () => {
+  const creatorEmail = `pet-merge-creator-${randomUUID()}@aquiayudamosve.test`;
+  const citizenEmail = `pet-merge-citizen-${randomUUID()}@aquiayudamosve.test`;
+  const modEmail = `pet-merge-mod-${randomUUID()}@aquiayudamosve.test`;
+  const password = "SuperSecreta123";
+  let creatorToken: string;
+  let citizenToken: string;
+  let modToken: string;
+  let lostDogAId: string;
+  let lostDogBId: string;
+
+  beforeAll(async () => {
+    const creatorRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: creatorEmail, password, displayName: "Pet Merge Creator" });
+    creatorToken = creatorRes.body.accessToken;
+
+    const citizenRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: citizenEmail, password, displayName: "Pet Merge Citizen" });
+    citizenToken = citizenRes.body.accessToken;
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const mod = await prisma.user.create({ data: { email: modEmail, passwordHash, displayName: "Pet Merge Mod", role: "moderator" } });
+    await prisma.userReputation.create({ data: { userId: mod.id, level: "colaborador_confiable", score: 100 } });
+    const modLogin = await request(app).post("/api/auth/login").send({ email: modEmail, password });
+    modToken = modLogin.body.accessToken;
+
+    async function createPet(species: string, lat: string, lng: string, description: string) {
+      const res = await request(app)
+        .post("/api/pets")
+        .set("Authorization", `Bearer ${creatorToken}`)
+        .field("reportType", "lost")
+        .field("species", species)
+        .field("description", description)
+        .field("departmentName", "Santander")
+        .field("municipalityName", "Bucaramanga")
+        .field("locationSource", "manual")
+        .field("lat", lat)
+        .field("lng", lng);
+      return res.body.id as string;
+    }
+
+    lostDogAId = await createPet("dog", "7.119", "-73.122", "Perro perdido A — prueba de duplicados Fase 4");
+    lostDogBId = await createPet("dog", "7.120", "-73.123", "Perro perdido B — casi seguro el mismo que A");
+  });
+
+  it("blocks a citizen from the duplicates endpoint", async () => {
+    const res = await request(app).get("/api/admin/pets/duplicates").set("Authorization", `Bearer ${citizenToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  it("finds the nearby lost dog pair as possible duplicates", async () => {
+    const res = await request(app).get("/api/admin/pets/duplicates").set("Authorization", `Bearer ${modToken}`);
+    expect(res.status).toBe(200);
+    const found = res.body.pairs.some(
+      (p: { a: { id: string }; b: { id: string } }) =>
+        (p.a.id === lostDogAId && p.b.id === lostDogBId) || (p.a.id === lostDogBId && p.b.id === lostDogAId)
+    );
+    expect(found).toBe(true);
+  });
+
+  it("rejects merging two pets of different species", async () => {
+    const catRes = await request(app)
+      .post("/api/pets")
+      .set("Authorization", `Bearer ${creatorToken}`)
+      .field("reportType", "lost")
+      .field("species", "cat")
+      .field("description", "Gato perdido — especie distinta para probar el guard de fusión")
+      .field("departmentName", "Santander")
+      .field("municipalityName", "Bucaramanga")
+      .field("locationSource", "manual")
+      .field("lat", "7.119")
+      .field("lng", "-73.122");
+    const catId = catRes.body.id;
+
+    const res = await request(app)
+      .patch(`/api/admin/pets/${lostDogAId}/merge`)
+      .set("Authorization", `Bearer ${modToken}`)
+      .send({ intoId: catId, reason: "Prueba: no debería permitir especies distintas" });
+    expect(res.status).toBe(400);
+
+    await prisma.petReport.deleteMany({ where: { id: catId } });
+  });
+
+  it("blocks an unauthenticated merge request", async () => {
+    const res = await request(app).patch(`/api/admin/pets/${lostDogAId}/merge`).send({ intoId: lostDogBId, reason: "x" });
+    expect(res.status).toBe(401);
+  });
+
+  it("merges A into B — A soft-deletes (404 publicly), AuditLog records mergedIntoId", async () => {
+    const res = await request(app)
+      .patch(`/api/admin/pets/${lostDogAId}/merge`)
+      .set("Authorization", `Bearer ${modToken}`)
+      .send({ intoId: lostDogBId, reason: "Prueba: fusión de duplicados reales" });
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(lostDogBId);
+
+    const publicRes = await request(app).get(`/api/pets/${lostDogAId}`);
+    expect(publicRes.status).toBe(404);
+
+    const log = await prisma.auditLog.findFirst({
+      where: { entityType: "pet_report", entityId: lostDogAId, action: "pet.moderation.merge" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(log).not.toBeNull();
+    const metadata = log?.metadata as { mergedIntoId?: string } | null;
+    expect(metadata?.mergedIntoId).toBe(lostDogBId);
+  });
+
+  afterAll(async () => {
+    await prisma.petReport.deleteMany({ where: { id: { in: [lostDogAId, lostDogBId] } } });
+    const emails = [creatorEmail, citizenEmail, modEmail];
+    await prisma.session.deleteMany({ where: { user: { email: { in: emails } } } });
+    await prisma.userReputation.deleteMany({ where: { user: { email: { in: emails } } } });
+    await prisma.user.deleteMany({ where: { email: { in: emails } } });
+  });
+});
+
 describe("Compartir un reporte de mascota", () => {
   const email = `pet-share-${randomUUID()}@aquiayudamosve.test`;
   const password = "SuperSecreta123";

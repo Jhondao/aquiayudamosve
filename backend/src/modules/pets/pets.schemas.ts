@@ -124,6 +124,12 @@ export const petModerationActionSchema = z.object({
   reason: z.string().trim().min(3).max(500),
 });
 
+// Fase 4 — fusión de duplicados.
+export const mergePetReportSchema = z.object({
+  intoId: z.string().uuid(),
+  reason: z.string().trim().min(3).max(500),
+});
+
 // Fase 2 — confirmar/avistar/revelar contacto llegan como JSON plano (nunca
 // multipart), así que z.boolean()/z.number() directo funcionan bien acá —
 // requiredNumericString/booleanString arriba existen solo por el multipart
