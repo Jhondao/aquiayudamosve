@@ -76,18 +76,25 @@ export default function PetDetailPage() {
   async function load() {
     if (!id) return;
     try {
-      const [res, sightingsRes, matchesRes] = await Promise.all([
-        api.getPetReport(id),
-        api.getPetSightings(id),
-        api.getPossibleMatches(id),
-      ]);
+      const res = await api.getPetReport(id);
       setPet(res);
       setStatusInput(res.status);
-      setSightings(sightingsRes);
-      setPossibleMatches(matchesRes);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo cargar el reporte.");
+      return;
     }
+    // Aparte del fetch principal a propósito: ni avistamientos ni posibles
+    // coincidencias son datos críticos para ver la mascota — si cualquiera
+    // de los dos falla, no debe tumbar toda la página a "no se pudo cargar"
+    // cuando el reporte en sí sí cargó bien.
+    api
+      .getPetSightings(id)
+      .then(setSightings)
+      .catch(() => setSightings([]));
+    api
+      .getPossibleMatches(id)
+      .then(setPossibleMatches)
+      .catch(() => setPossibleMatches([]));
   }
 
   useEffect(() => {
@@ -152,15 +159,27 @@ export default function PetDetailPage() {
           }
         : undefined;
 
-      if (action.kind === "confirm") {
-        setPet(await api.confirmPet(pet.id, action.type, guest));
-      } else if (action.kind === "sighting") {
-        const sighting = await api.createPetSighting(pet.id, { lat: action.lat, lng: action.lng, note: action.note }, guest);
-        setSightings((prev) => [sighting, ...prev]);
-        setSightingNote("");
-        setSightingLocation(null);
-      } else {
-        setRevealedContact(await api.revealPetContact(pet.id, guest));
+      switch (action.kind) {
+        case "confirm":
+          setPet(await api.confirmPet(pet.id, action.type, guest));
+          break;
+        case "sighting": {
+          const sighting = await api.createPetSighting(pet.id, { lat: action.lat, lng: action.lng, note: action.note }, guest);
+          setSightings((prev) => [sighting, ...prev]);
+          setSightingNote("");
+          setSightingLocation(null);
+          break;
+        }
+        case "reveal":
+          setRevealedContact(await api.revealPetContact(pet.id, guest));
+          break;
+        default: {
+          // Exhaustividad: si se agrega un PendingAction.kind nuevo sin
+          // manejarlo acá, esto deja de compilar en vez de ejecutar la
+          // última rama por accidente (ver revisión del frontend-validator).
+          const _exhaustive: never = action;
+          throw new Error(`Acción de mascota sin manejar: ${JSON.stringify(_exhaustive)}`);
+        }
       }
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo completar la acción.");
