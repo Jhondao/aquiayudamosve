@@ -12,6 +12,17 @@ export function Footer() {
           Política de tratamiento de datos personales
         </Link>
       </p>
+      <p className="mt-2">
+        Es un proyecto de código abierto — si quieres colaborar, escríbenos a{" "}
+        <a href="mailto:jostele17@gmail.com" className="underline hover:text-slate-300">
+          jostele17@gmail.com
+        </a>{" "}
+        o{" "}
+        <a href="mailto:jdorozco13@gmail.com" className="underline hover:text-slate-300">
+          jdorozco13@gmail.com
+        </a>
+        .
+      </p>
     </footer>
   );
 }

@@ -59,8 +59,12 @@ export default function PrivacyPolicyPage() {
       <h2 className="mt-6 text-sm font-bold text-white">Cómo ejercer estos derechos</h2>
       <p className="mt-2">
         Escríbenos a{" "}
-        <a href="mailto:contacto@aquiayudamosve.org" className="font-semibold text-accent underline">
-          contacto@aquiayudamosve.org
+        <a href="mailto:jostele17@gmail.com" className="font-semibold text-accent underline">
+          jostele17@gmail.com
+        </a>{" "}
+        o{" "}
+        <a href="mailto:jdorozco13@gmail.com" className="font-semibold text-accent underline">
+          jdorozco13@gmail.com
         </a>{" "}
         indicando qué reporte o correo/celular quieres actualizar o eliminar. Si tienes una cuenta registrada,
         también puedes actualizar tu información directamente desde tu perfil.

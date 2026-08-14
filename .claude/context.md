@@ -929,8 +929,8 @@ datos se recolectan (nombre/correo/celular, ubicación, fotos de evidencia) y pa
 comparten (nunca con fines comerciales — solo los proveedores técnicos que hacen funcionar la
 plataforma), los 5 derechos del titular que exige la ley (conocer/actualizar/rectificar; solicitar
 prueba de autorización; ser informado; revocar autorización y/o solicitar supresión; acceder
-gratis), y cómo ejercerlos (`contacto@aquiayudamosve.org` — mismo correo que ya se usaba como
-`VAPID_CONTACT` por defecto, reusado a propósito en vez de inventar uno nuevo). Escrita en lenguaje
+gratis), y cómo ejercerlos (`jostele17@gmail.com` / `jdorozco13@gmail.com` — el primero también es
+el `VAPID_CONTACT` por defecto). Escrita en lenguaje
 llano, sin inventar una razón social/NIT que no existe — se describe honestamente como iniciativa
 comunitaria sin fines de lucro (mismo texto que ya usa `Footer.tsx`), no una empresa.
 

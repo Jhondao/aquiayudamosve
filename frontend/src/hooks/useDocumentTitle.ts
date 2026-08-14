@@ -1,6 +1,9 @@
 import { useEffect } from "react";
 
-const SITE_NAME = "AquiAyudamosVE";
+// Incluye "Colombia" en el sufijo (no solo "AquiAyudamosVE" a secas) porque
+// la pestaña del navegador es lo único visible en todo momento y "VE" por sí
+// solo se confunde con el código de país de Venezuela.
+const SITE_NAME = "AquiAyudamosVE Colombia";
 
 /**
  * SPA sin SSR/prerendering: React Router cambia la URL en el navegador pero

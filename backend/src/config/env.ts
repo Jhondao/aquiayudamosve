@@ -30,7 +30,9 @@ export const env = {
   // (ver lib/push.ts), así que dev/tests no necesitan tenerlas configuradas.
   vapidPublicKey: process.env.VAPID_PUBLIC_KEY,
   vapidPrivateKey: process.env.VAPID_PRIVATE_KEY,
-  vapidContact: process.env.VAPID_CONTACT ?? "mailto:contacto@aquiayudamosve.org",
+  // VAPID solo acepta un contacto — se usa el primero de los dos correos
+  // reales del proyecto (ver Footer.tsx/PrivacyPolicyPage.tsx para ambos).
+  vapidContact: process.env.VAPID_CONTACT ?? "mailto:jostele17@gmail.com",
   // reCAPTCHA Enterprise: verifica confirmaciones hechas sin cuenta (ver
   // lib/recaptcha.ts). Igual que STORAGE_*/VAPID_*, opcional y validado solo
   // al usarse — sin esto configurado, verifyRecaptcha() deja pasar la acción

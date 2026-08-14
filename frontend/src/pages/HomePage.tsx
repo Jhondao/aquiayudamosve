@@ -56,7 +56,7 @@ const HELP_ACTIONS = [
 ];
 
 export default function HomePage() {
-  useDocumentTitle("Ayuda comunitaria en Colombia");
+  useDocumentTitle("Ayuda donde más hace falta");
 
   const [allReports, setAllReports] = useState<Report[]>([]);
   const [petsCount, setPetsCount] = useState<number | null>(null);
