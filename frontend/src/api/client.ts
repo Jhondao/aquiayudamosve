@@ -5,13 +5,18 @@ import type {
   PetHelpCategory,
   PetReport,
   PetReportType,
+  PetResource,
+  PetResourceCategory,
   PetShareCard,
   PetSex,
+  PetSighting,
   PetSize,
   PetSpecies,
   PetStatus,
+  PossibleMatch,
   Profile,
   Report,
+  RevealedPetContact,
   ShareCard,
   ShareChannel,
 } from "../types";
@@ -302,6 +307,25 @@ export const api = {
   recordPetShareEvent: (id: string, channel: ShareChannel) =>
     request<{ ok: true }>(`/api/pets/${id}/share-event`, { method: "POST", body: JSON.stringify({ channel }) }),
 
+  // Fase 2 — confirmar/avistar/revelar contacto son JSON planos, sin foto,
+  // así que van directo por JSON.stringify (a diferencia de createPetReport).
+  confirmPet: (
+    id: string,
+    type: "confirm" | "incorrect",
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<PetReport>(`/api/pets/${id}/confirm`, { method: "POST", body: JSON.stringify({ type, ...guest }) }),
+  createPetSighting: (
+    id: string,
+    data: { lat?: number; lng?: number; note?: string },
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<PetSighting>(`/api/pets/${id}/sightings`, { method: "POST", body: JSON.stringify({ ...data, ...guest }) }),
+  getPetSightings: (id: string) => request<PetSighting[]>(`/api/pets/${id}/sightings`),
+  getPossibleMatches: (id: string) => request<PossibleMatch[]>(`/api/pets/${id}/possible-matches`),
+  revealPetContact: (
+    id: string,
+    guest?: { displayName: string; email?: string; phone?: string; recaptchaToken?: string | null; website?: string }
+  ) => request<RevealedPetContact>(`/api/pets/${id}/reveal-contact`, { method: "POST", body: JSON.stringify({ ...guest }) }),
+
   getAllPets: (params: { departmentName?: string; municipalityName?: string } = {}) => {
     const qs = new URLSearchParams();
     if (params.departmentName) qs.set("departmentName", params.departmentName);
@@ -312,6 +336,52 @@ export const api = {
     request<(PetReport & { hidden: boolean }) | null>(`/api/admin/pets/${id}`, {
       method: "PATCH",
       body: JSON.stringify({ action, reason }),
+    }),
+
+  // Fase 3 — directorio "quiero ayudar con mascotas".
+  createPetResource: (data: {
+    category: PetResourceCategory;
+    name: string;
+    description: string;
+    contactName: string;
+    contactEmail?: string;
+    contactPhone?: string;
+    departmentName: string;
+    municipalityName: string;
+    availabilityNote?: string;
+  }) => request<PetResource>("/api/pets/resources", { method: "POST", body: JSON.stringify(data) }),
+  getPetResources: (
+    params: { category?: PetResourceCategory; departmentName?: string; municipalityName?: string; page?: number; pageSize?: number } = {}
+  ) => {
+    const qs = new URLSearchParams();
+    if (params.category) qs.set("category", params.category);
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
+    if (params.page) qs.set("page", String(params.page));
+    if (params.pageSize) qs.set("pageSize", String(params.pageSize));
+    return request<{ resources: PetResource[]; total: number; page: number; pageSize: number }>(`/api/pets/resources?${qs.toString()}`);
+  },
+  getPetResource: (id: string) => request<PetResource>(`/api/pets/resources/${id}`),
+
+  getAllPetResources: (params: { departmentName?: string; municipalityName?: string } = {}) => {
+    const qs = new URLSearchParams();
+    if (params.departmentName) qs.set("departmentName", params.departmentName);
+    if (params.municipalityName) qs.set("municipalityName", params.municipalityName);
+    return request<{ resources: (PetResource & { hidden: boolean })[] }>(`/api/admin/pet-resources?${qs.toString()}`);
+  },
+  moderatePetResource: (id: string, action: "hide" | "unhide" | "delete", reason: string) =>
+    request<(PetResource & { hidden: boolean }) | null>(`/api/admin/pet-resources/${id}`, {
+      method: "PATCH",
+      body: JSON.stringify({ action, reason }),
+    }),
+
+  // Fase 4 — bajo demanda, nunca en la carga inicial de AdminPage (ver
+  // pets.service.ts#findDuplicatePets).
+  getPetDuplicates: () => request<{ pairs: { a: PetReport; b: PetReport; distanceMeters: number }[] }>("/api/admin/pets/duplicates"),
+  mergePets: (id: string, intoId: string, reason: string) =>
+    request<(PetReport & { hidden: boolean }) | null>(`/api/admin/pets/${id}/merge`, {
+      method: "PATCH",
+      body: JSON.stringify({ intoId, reason }),
     }),
 };
 

@@ -123,3 +123,62 @@ export const petModerationActionSchema = z.object({
   action: z.enum(["hide", "unhide", "delete"]),
   reason: z.string().trim().min(3).max(500),
 });
+
+// Fase 4 — fusión de duplicados.
+export const mergePetReportSchema = z.object({
+  intoId: z.string().uuid(),
+  reason: z.string().trim().min(3).max(500),
+});
+
+// Fase 2 — confirmar/avistar/revelar contacto llegan como JSON plano (nunca
+// multipart), así que z.boolean()/z.number() directo funcionan bien acá —
+// requiredNumericString/booleanString arriba existen solo por el multipart
+// de POST /api/pets, no aplican a estos tres schemas.
+
+// Solo confirm/incorrect — la UI de mascotas nunca ofrece "unsure", aunque
+// el enum de Prisma (reusado de ConfirmationType) sí lo permita.
+export const petConfirmSchema = z.object({
+  type: z.enum(["confirm", "incorrect"]),
+  displayName: z.string().trim().min(2).max(80).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  phone: z
+    .string()
+    .trim()
+    .min(7)
+    .max(20)
+    .regex(/^[0-9+()\-\s]+$/, "Celular inválido.")
+    .optional(),
+  recaptchaToken: z.string().min(1).optional(),
+  website: z.string().max(0, "Campo inválido.").optional(),
+});
+
+export const createPetSightingSchema = z.object({
+  lat: z.number().gte(-90).lte(90).optional(),
+  lng: z.number().gte(-180).lte(180).optional(),
+  note: z.string().trim().min(1).max(300).optional(),
+  displayName: z.string().trim().min(2).max(80).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  phone: z
+    .string()
+    .trim()
+    .min(7)
+    .max(20)
+    .regex(/^[0-9+()\-\s]+$/, "Celular inválido.")
+    .optional(),
+  recaptchaToken: z.string().min(1).optional(),
+  website: z.string().max(0, "Campo inválido.").optional(),
+});
+
+export const revealPetContactSchema = z.object({
+  displayName: z.string().trim().min(2).max(80).optional(),
+  email: z.string().trim().toLowerCase().email().optional(),
+  phone: z
+    .string()
+    .trim()
+    .min(7)
+    .max(20)
+    .regex(/^[0-9+()\-\s]+$/, "Celular inválido.")
+    .optional(),
+  recaptchaToken: z.string().min(1).optional(),
+  website: z.string().max(0, "Campo inválido.").optional(),
+});

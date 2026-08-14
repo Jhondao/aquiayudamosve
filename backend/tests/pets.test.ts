@@ -4,6 +4,7 @@ import request from "supertest";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { createApp } from "../src/app";
 import { prisma } from "../src/lib/prisma";
+import { syntheticEmailForPhone } from "../src/lib/guestIdentity";
 import { determinePetShareStatus } from "../src/modules/pets/petShareCard.service";
 
 const app = createApp();
@@ -433,6 +434,472 @@ describe("Moderación de mascotas (RBAC)", () => {
     await prisma.petShareEvent.deleteMany({ where: { petReportId: petId } });
     await prisma.petReport.deleteMany({ where: { id: petId } });
     const emails = [citizenEmail, modEmail];
+    await prisma.session.deleteMany({ where: { user: { email: { in: emails } } } });
+    await prisma.userReputation.deleteMany({ where: { user: { email: { in: emails } } } });
+    await prisma.user.deleteMany({ where: { email: { in: emails } } });
+  });
+});
+
+describe("Confirmar una mascota (Fase 2)", () => {
+  const creatorEmail = `pet-confirm-creator-${randomUUID()}@aquiayudamosve.test`;
+  const password = "SuperSecreta123";
+  let creatorToken: string;
+  let petId: string;
+
+  beforeAll(async () => {
+    const creatorRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: creatorEmail, password, displayName: "Pet Confirm Creator" });
+    creatorToken = creatorRes.body.accessToken;
+
+    const petRes = await request(app)
+      .post("/api/pets")
+      .set("Authorization", `Bearer ${creatorToken}`)
+      .field("reportType", "lost")
+      .field("species", "dog")
+      .field("description", "Perro perdido — prueba de confirmaciones Fase 2")
+      .field("departmentName", "Valle del Cauca")
+      .field("municipalityName", "Cali")
+      .field("locationSource", "manual")
+      .field("lat", "3.45")
+      .field("lng", "-76.53");
+    petId = petRes.body.id;
+  });
+
+  it("rejects a guest confirmation with neither email nor phone", async () => {
+    const res = await request(app).post(`/api/pets/${petId}/confirm`).send({ type: "confirm", displayName: "Sin Contacto" });
+    expect(res.status).toBe(400);
+  });
+
+  it("confirms as a guest — bumps confirmationsCount and lastConfirmedAt", async () => {
+    const email = `pet-confirm-guest-${randomUUID()}@aquiayudamosve.test`;
+    const res = await request(app)
+      .post(`/api/pets/${petId}/confirm`)
+      .send({ type: "confirm", displayName: "Vecino Guest", email });
+    expect(res.status).toBe(200);
+    expect(res.body.confirmationsCount).toBe(1);
+
+    const guestUser = await prisma.user.findUnique({ where: { email } });
+    expect(guestUser?.isGuest).toBe(true);
+  });
+
+  it("rejects a repeated confirmation of the same type for the same identity (409)", async () => {
+    const email = `pet-confirm-dup-${randomUUID()}@aquiayudamosve.test`;
+    await request(app).post(`/api/pets/${petId}/confirm`).send({ type: "confirm", displayName: "Repetido", email });
+    const res = await request(app).post(`/api/pets/${petId}/confirm`).send({ type: "confirm", displayName: "Repetido", email });
+    expect(res.status).toBe(409);
+  });
+
+  it("lets an authenticated user mark it incorrect, independent of the guest confirmation", async () => {
+    const otherRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: `pet-confirm-other-${randomUUID()}@aquiayudamosve.test`, password, displayName: "Pet Confirm Other" });
+    const res = await request(app)
+      .post(`/api/pets/${petId}/confirm`)
+      .set("Authorization", `Bearer ${otherRes.body.accessToken}`)
+      .send({ type: "incorrect" });
+    expect(res.status).toBe(200);
+    expect(res.body.incorrectCount).toBe(1);
+  });
+
+  afterAll(async () => {
+    await prisma.petReport.deleteMany({ where: { id: petId } });
+    await prisma.session.deleteMany({ where: { user: { email: { contains: "pet-confirm-" } } } });
+    await prisma.userReputation.deleteMany({ where: { user: { email: { contains: "pet-confirm-" } } } });
+    await prisma.user.deleteMany({ where: { email: { contains: "pet-confirm-" } } });
+  });
+});
+
+describe("Avistamientos de una mascota — 'LA VI AQUÍ' (Fase 2)", () => {
+  const creatorEmail = `pet-sighting-creator-${randomUUID()}@aquiayudamosve.test`;
+  const password = "SuperSecreta123";
+  let petId: string;
+
+  beforeAll(async () => {
+    const creatorRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: creatorEmail, password, displayName: "Pet Sighting Creator" });
+
+    const petRes = await request(app)
+      .post("/api/pets")
+      .set("Authorization", `Bearer ${creatorRes.body.accessToken}`)
+      .field("reportType", "lost")
+      .field("species", "cat")
+      .field("description", "Gato perdido — prueba de avistamientos Fase 2")
+      .field("departmentName", "Valle del Cauca")
+      .field("municipalityName", "Cali")
+      .field("locationSource", "manual")
+      .field("lat", "3.45")
+      .field("lng", "-76.53");
+    petId = petRes.body.id;
+  });
+
+  it("records a sighting with location as a guest, never exposing the author", async () => {
+    const res = await request(app)
+      .post(`/api/pets/${petId}/sightings`)
+      .send({ lat: 3.46, lng: -76.52, note: "La vi cruzando la calle", displayName: "Testigo", email: `pet-sighting-guest-${randomUUID()}@aquiayudamosve.test` });
+    expect(res.status).toBe(201);
+    expect(res.body.lat).toBe(3.46);
+    expect(res.body.note).toBe("La vi cruzando la calle");
+    expect(res.body.userId).toBeUndefined();
+    expect(res.body.displayName).toBeUndefined();
+  });
+
+  it("records a sighting without a location — just a note", async () => {
+    const res = await request(app)
+      .post(`/api/pets/${petId}/sightings`)
+      .send({ note: "La escuché maullar cerca del parque", displayName: "Otro Testigo", email: `pet-sighting-guest2-${randomUUID()}@aquiayudamosve.test` });
+    expect(res.status).toBe(201);
+    expect(res.body.lat).toBeNull();
+    expect(res.body.note).toBe("La escuché maullar cerca del parque");
+  });
+
+  it("lists sightings newest-first, anonymized", async () => {
+    const res = await request(app).get(`/api/pets/${petId}/sightings`);
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveLength(2);
+    expect(res.body.every((s: { userId?: string }) => s.userId === undefined)).toBe(true);
+  });
+
+  afterAll(async () => {
+    await prisma.petReport.deleteMany({ where: { id: petId } });
+    await prisma.session.deleteMany({ where: { user: { email: { contains: "pet-sighting-" } } } });
+    await prisma.userReputation.deleteMany({ where: { user: { email: { contains: "pet-sighting-" } } } });
+    await prisma.user.deleteMany({ where: { email: { contains: "pet-sighting-" } } });
+  });
+});
+
+describe("Posibles coincidencias (Fase 2)", () => {
+  const creatorEmail = `pet-match-creator-${randomUUID()}@aquiayudamosve.test`;
+  const password = "SuperSecreta123";
+  let creatorToken: string;
+  let modToken: string;
+  let lostDogId: string;
+  let foundDogId: string;
+  let foundCatId: string;
+
+  beforeAll(async () => {
+    const creatorRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: creatorEmail, password, displayName: "Pet Match Creator" });
+    creatorToken = creatorRes.body.accessToken;
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const modEmail = `pet-match-mod-${randomUUID()}@aquiayudamosve.test`;
+    const mod = await prisma.user.create({ data: { email: modEmail, passwordHash, displayName: "Pet Match Mod", role: "moderator" } });
+    await prisma.userReputation.create({ data: { userId: mod.id, level: "colaborador_confiable", score: 100 } });
+    const modLogin = await request(app).post("/api/auth/login").send({ email: modEmail, password });
+    modToken = modLogin.body.accessToken;
+
+    async function createPet(reportType: string, species: string, lat: string, lng: string, description: string) {
+      const res = await request(app)
+        .post("/api/pets")
+        .set("Authorization", `Bearer ${creatorToken}`)
+        .field("reportType", reportType)
+        .field("species", species)
+        .field("description", description)
+        .field("departmentName", "Antioquia")
+        .field("municipalityName", "Medellín")
+        .field("locationSource", "manual")
+        .field("lat", lat)
+        .field("lng", lng);
+      return res.body.id as string;
+    }
+
+    lostDogId = await createPet("lost", "dog", "6.250", "-75.560", "Perro perdido — prueba de posibles coincidencias");
+    foundDogId = await createPet("found", "dog", "6.251", "-75.561", "Perro encontrado cerca — prueba de posibles coincidencias");
+    foundCatId = await createPet("found", "cat", "6.251", "-75.561", "Gato encontrado cerca — especie distinta, no debe matchear");
+  });
+
+  it("finds a nearby found dog as a possible match for a lost dog, excluding a different species", async () => {
+    const res = await request(app).get(`/api/pets/${lostDogId}/possible-matches`);
+    expect(res.status).toBe(200);
+    const ids = res.body.map((m: { id: string }) => m.id);
+    expect(ids).toContain(foundDogId);
+    expect(ids).not.toContain(foundCatId);
+    const match = res.body.find((m: { id: string }) => m.id === foundDogId);
+    expect(typeof match.distanceMeters).toBe("number");
+  });
+
+  it("excludes a hidden pet from possible matches", async () => {
+    await request(app)
+      .patch(`/api/admin/pets/${foundDogId}`)
+      .set("Authorization", `Bearer ${modToken}`)
+      .send({ action: "hide", reason: "Prueba: excluir de posibles coincidencias" });
+
+    const res = await request(app).get(`/api/pets/${lostDogId}/possible-matches`);
+    expect(res.body.map((m: { id: string }) => m.id)).not.toContain(foundDogId);
+
+    await request(app)
+      .patch(`/api/admin/pets/${foundDogId}`)
+      .set("Authorization", `Bearer ${modToken}`)
+      .send({ action: "unhide", reason: "Prueba: revertir" });
+  });
+
+  afterAll(async () => {
+    await prisma.petReport.deleteMany({ where: { id: { in: [lostDogId, foundDogId, foundCatId] } } });
+    await prisma.session.deleteMany({ where: { user: { email: { contains: "pet-match-" } } } });
+    await prisma.userReputation.deleteMany({ where: { user: { email: { contains: "pet-match-" } } } });
+    await prisma.user.deleteMany({ where: { email: { contains: "pet-match-" } } });
+  });
+});
+
+describe("Revelar contacto de una mascota (Fase 2)", () => {
+  const password = "SuperSecreta123";
+  let phoneOnlyPetId: string;
+  let emailPetId: string;
+  const phoneOnlyCreatorPhone = `3${Date.now().toString().slice(-9)}`;
+  const emailCreatorEmail = `pet-reveal-email-creator-${randomUUID()}@aquiayudamosve.test`;
+
+  beforeAll(async () => {
+    // Creados directo por Prisma, no vía POST /api/pets como invitado — ese
+    // endpoint comparte un rate limiter (createPetReportLimiter, 8/10min por
+    // IP) con TODO el resto del archivo, incluido el primer describe block
+    // que ya lo agota con sus propias pruebas de invitado. Esto también deja
+    // el escenario exacto que hace falta (email sintético real vía
+    // syntheticEmailForPhone), sin depender de si ese endpoint tiene
+    // presupuesto libre en este punto de la corrida.
+    const phoneOnlyUser = await prisma.user.create({
+      data: {
+        email: syntheticEmailForPhone(phoneOnlyCreatorPhone),
+        phone: phoneOnlyCreatorPhone,
+        isGuest: true,
+        displayName: "Solo Celular",
+        reputation: { create: { score: 0, level: "nuevo" } },
+      },
+    });
+    const phoneOnlyPet = await prisma.petReport.create({
+      data: {
+        reportType: "lost",
+        species: "dog",
+        description: "Perro perdido — creador solo dio celular, prueba de revelar contacto",
+        status: "lost",
+        departmentName: "Antioquia",
+        municipalityName: "Medellín",
+        locationSource: "manual",
+        lat: 6.25,
+        lng: -75.56,
+        createdById: phoneOnlyUser.id,
+      },
+    });
+    phoneOnlyPetId = phoneOnlyPet.id;
+
+    const emailUser = await prisma.user.create({
+      data: {
+        email: emailCreatorEmail,
+        isGuest: true,
+        displayName: "Con Correo",
+        reputation: { create: { score: 0, level: "nuevo" } },
+      },
+    });
+    const emailPet = await prisma.petReport.create({
+      data: {
+        reportType: "lost",
+        species: "cat",
+        description: "Gato perdido — creador dio correo, prueba de revelar contacto",
+        status: "lost",
+        departmentName: "Antioquia",
+        municipalityName: "Medellín",
+        locationSource: "manual",
+        lat: 6.25,
+        lng: -75.56,
+        createdById: emailUser.id,
+      },
+    });
+    emailPetId = emailPet.id;
+  });
+
+  it("never leaks the synthetic placeholder email for a phone-only creator", async () => {
+    const res = await request(app)
+      .post(`/api/pets/${phoneOnlyPetId}/reveal-contact`)
+      .send({ displayName: "Quiere Contactar", email: `pet-reveal-requester-${randomUUID()}@aquiayudamosve.test` });
+    expect(res.status).toBe(200);
+    expect(res.body.displayName).toBe("Solo Celular");
+    expect(res.body.phone).toBe(phoneOnlyCreatorPhone);
+    expect(res.body.email).toBeUndefined();
+  });
+
+  it("reveals the real email for a creator who gave one", async () => {
+    const res = await request(app)
+      .post(`/api/pets/${emailPetId}/reveal-contact`)
+      .send({ displayName: "Otro Interesado", email: `pet-reveal-requester2-${randomUUID()}@aquiayudamosve.test` });
+    expect(res.status).toBe(200);
+    expect(res.body.email).toBe(emailCreatorEmail);
+  });
+
+  it("requires the requester's own name and contact when there's no session", async () => {
+    const res = await request(app).post(`/api/pets/${emailPetId}/reveal-contact`).send({});
+    expect(res.status).toBe(400);
+  });
+
+  it("logs an AuditLog entry with the requester, never the revealed email/phone", async () => {
+    const log = await prisma.auditLog.findFirst({
+      where: { entityType: "pet_report", entityId: emailPetId, action: "pet.contact_revealed" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(log).not.toBeNull();
+    expect(log?.actorId).not.toBeNull();
+    const metadata = log?.metadata as Record<string, unknown> | null;
+    expect(metadata).toHaveProperty("revealedToUserId");
+    expect(JSON.stringify(metadata)).not.toContain(emailCreatorEmail);
+  });
+
+  afterAll(async () => {
+    await prisma.petReport.deleteMany({ where: { id: { in: [phoneOnlyPetId, emailPetId] } } });
+    await prisma.session.deleteMany({ where: { user: { email: { contains: "pet-reveal-" } } } });
+    await prisma.userReputation.deleteMany({ where: { user: { email: { contains: "pet-reveal-" } } } });
+    await prisma.user.deleteMany({ where: { email: { contains: "pet-reveal-" } } });
+  });
+});
+
+// Describe aparte al final: el rate limiter de revelar contacto (5/hora por
+// IP, sin `skip` para sesión activa) es compartido por todo el proceso de
+// pruebas — no importa cuántas llamadas exitosas hicieron los bloques de
+// arriba, disparar bastantes más que el resto del presupuesto siempre debe
+// terminar en un 429, mismo criterio que el describe de rate limit al final
+// de guestConfirm.test.ts.
+describe("Rate limit de revelar contacto (Fase 2)", () => {
+  it("blocks further reveal-contact attempts from the same IP, even authenticated", async () => {
+    const password = "SuperSecreta123";
+    const authRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: `pet-reveal-ratelimit-${randomUUID()}@aquiayudamosve.test`, password, displayName: "Reveal Ratelimit" });
+    const token = authRes.body.accessToken;
+
+    const statuses: number[] = [];
+    for (let i = 0; i < 8; i++) {
+      // Secuencial a propósito — mismo motivo que el resto de pruebas de
+      // rate limit: ejercita el mismo bucket de IP.
+      // eslint-disable-next-line no-await-in-loop
+      const res = await request(app)
+        .post(`/api/pets/${randomUUID()}/reveal-contact`)
+        .set("Authorization", `Bearer ${token}`)
+        .send({});
+      statuses.push(res.status);
+    }
+    expect(statuses).toContain(429);
+  });
+
+  afterAll(async () => {
+    await prisma.session.deleteMany({ where: { user: { email: { contains: "pet-reveal-ratelimit-" } } } });
+    await prisma.userReputation.deleteMany({ where: { user: { email: { contains: "pet-reveal-ratelimit-" } } } });
+    await prisma.user.deleteMany({ where: { email: { contains: "pet-reveal-ratelimit-" } } });
+  });
+});
+
+describe("Detección de duplicados y fusión (Fase 4)", () => {
+  const creatorEmail = `pet-merge-creator-${randomUUID()}@aquiayudamosve.test`;
+  const citizenEmail = `pet-merge-citizen-${randomUUID()}@aquiayudamosve.test`;
+  const modEmail = `pet-merge-mod-${randomUUID()}@aquiayudamosve.test`;
+  const password = "SuperSecreta123";
+  let creatorToken: string;
+  let citizenToken: string;
+  let modToken: string;
+  let lostDogAId: string;
+  let lostDogBId: string;
+
+  beforeAll(async () => {
+    const creatorRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: creatorEmail, password, displayName: "Pet Merge Creator" });
+    creatorToken = creatorRes.body.accessToken;
+
+    const citizenRes = await request(app)
+      .post("/api/auth/register")
+      .send({ email: citizenEmail, password, displayName: "Pet Merge Citizen" });
+    citizenToken = citizenRes.body.accessToken;
+
+    const passwordHash = await bcrypt.hash(password, 12);
+    const mod = await prisma.user.create({ data: { email: modEmail, passwordHash, displayName: "Pet Merge Mod", role: "moderator" } });
+    await prisma.userReputation.create({ data: { userId: mod.id, level: "colaborador_confiable", score: 100 } });
+    const modLogin = await request(app).post("/api/auth/login").send({ email: modEmail, password });
+    modToken = modLogin.body.accessToken;
+
+    async function createPet(species: string, lat: string, lng: string, description: string) {
+      const res = await request(app)
+        .post("/api/pets")
+        .set("Authorization", `Bearer ${creatorToken}`)
+        .field("reportType", "lost")
+        .field("species", species)
+        .field("description", description)
+        .field("departmentName", "Santander")
+        .field("municipalityName", "Bucaramanga")
+        .field("locationSource", "manual")
+        .field("lat", lat)
+        .field("lng", lng);
+      return res.body.id as string;
+    }
+
+    lostDogAId = await createPet("dog", "7.119", "-73.122", "Perro perdido A — prueba de duplicados Fase 4");
+    lostDogBId = await createPet("dog", "7.120", "-73.123", "Perro perdido B — casi seguro el mismo que A");
+  });
+
+  it("blocks a citizen from the duplicates endpoint", async () => {
+    const res = await request(app).get("/api/admin/pets/duplicates").set("Authorization", `Bearer ${citizenToken}`);
+    expect(res.status).toBe(403);
+  });
+
+  it("finds the nearby lost dog pair as possible duplicates", async () => {
+    const res = await request(app).get("/api/admin/pets/duplicates").set("Authorization", `Bearer ${modToken}`);
+    expect(res.status).toBe(200);
+    const found = res.body.pairs.some(
+      (p: { a: { id: string }; b: { id: string } }) =>
+        (p.a.id === lostDogAId && p.b.id === lostDogBId) || (p.a.id === lostDogBId && p.b.id === lostDogAId)
+    );
+    expect(found).toBe(true);
+  });
+
+  it("rejects merging two pets of different species", async () => {
+    const catRes = await request(app)
+      .post("/api/pets")
+      .set("Authorization", `Bearer ${creatorToken}`)
+      .field("reportType", "lost")
+      .field("species", "cat")
+      .field("description", "Gato perdido — especie distinta para probar el guard de fusión")
+      .field("departmentName", "Santander")
+      .field("municipalityName", "Bucaramanga")
+      .field("locationSource", "manual")
+      .field("lat", "7.119")
+      .field("lng", "-73.122");
+    const catId = catRes.body.id;
+
+    const res = await request(app)
+      .patch(`/api/admin/pets/${lostDogAId}/merge`)
+      .set("Authorization", `Bearer ${modToken}`)
+      .send({ intoId: catId, reason: "Prueba: no debería permitir especies distintas" });
+    expect(res.status).toBe(400);
+
+    await prisma.petReport.deleteMany({ where: { id: catId } });
+  });
+
+  it("blocks an unauthenticated merge request", async () => {
+    const res = await request(app).patch(`/api/admin/pets/${lostDogAId}/merge`).send({ intoId: lostDogBId, reason: "x" });
+    expect(res.status).toBe(401);
+  });
+
+  it("merges A into B — A soft-deletes (404 publicly), AuditLog records mergedIntoId", async () => {
+    const res = await request(app)
+      .patch(`/api/admin/pets/${lostDogAId}/merge`)
+      .set("Authorization", `Bearer ${modToken}`)
+      .send({ intoId: lostDogBId, reason: "Prueba: fusión de duplicados reales" });
+    expect(res.status).toBe(200);
+    expect(res.body.id).toBe(lostDogBId);
+
+    const publicRes = await request(app).get(`/api/pets/${lostDogAId}`);
+    expect(publicRes.status).toBe(404);
+
+    const log = await prisma.auditLog.findFirst({
+      where: { entityType: "pet_report", entityId: lostDogAId, action: "pet.moderation.merge" },
+      orderBy: { createdAt: "desc" },
+    });
+    expect(log).not.toBeNull();
+    const metadata = log?.metadata as { mergedIntoId?: string } | null;
+    expect(metadata?.mergedIntoId).toBe(lostDogBId);
+  });
+
+  afterAll(async () => {
+    await prisma.petReport.deleteMany({ where: { id: { in: [lostDogAId, lostDogBId] } } });
+    const emails = [creatorEmail, citizenEmail, modEmail];
     await prisma.session.deleteMany({ where: { user: { email: { in: emails } } } });
     await prisma.userReputation.deleteMany({ where: { user: { email: { in: emails } } } });
     await prisma.user.deleteMany({ where: { email: { in: emails } } });

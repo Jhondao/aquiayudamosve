@@ -483,9 +483,10 @@ Fase 1/MVP del documento "PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS": r
 perdidas, encontradas, heridas o que necesitan ayuda, con foto, ubicación, estado y compartir por
 WhatsApp. **Deliberadamente no comparte código con `reports/`** más allá de dos extracciones a
 `lib/` (`cardRenderer.ts`, `guestIdentity.ts`) — mismo criterio de "sin servicios genéricos
-compartidos entre módulos" que ya rige el resto del backend (sección 3). **Sin `trustScore`/
-confirmaciones** — mascotas no tiene eje de confianza en Fase 1 en absoluto (eso es lo que las
-confirmaciones comunitarias de Fase 2 agregarían).
+compartidos entre módulos" que ya rige el resto del backend (sección 3). **Sin `trustScore`
+numérico de 0-100 ni decaimiento por tiempo** como el de `Report` — Fase 2 (sección 4.8) le agrega
+un conteo simple de confirm/incorrect, deliberadamente más liviano que el algoritmo completo de
+reportes.
 
 **Modelo `PetReport`**: `reportType` (`lost`/`found`/`injured`/`needs_help`), `species`, `name?`,
 `breed?`, `sex` (default `unknown`), `size?`, `primaryColor?`, `distinctiveFeatures?`,
@@ -564,11 +565,128 @@ claridad). `PetShareEvent` es un modelo propio, no una generalización de `Share
 una FK dura a `Report` con `onDelete: Cascade` — retocarlo a polimórfico tocaría una tabla que ya
 funciona por una ganancia mínima a esta escala).
 
-**Sin mecanismo de contacto directo (confirmado con el usuario, Fase 1).** El documento tampoco lo
-especifica (lo deja abierto). La reunificación depende de que la pieza compartida por WhatsApp
-circule y llegue a la persona correcta — un mecanismo de contacto (revelar correo/celular con
-advertencia, o "reportar posible coincidencia") queda como el primer punto de Fase 2, junto con las
-confirmaciones comunitarias que esa fase agrega.
+**Fase 1 se publicó deliberadamente sin mecanismo de contacto directo** (confirmado con el usuario
+durante la planeación) — la reunificación dependía solo de que la pieza compartida por WhatsApp
+circulara y llegara a la persona correcta. Fase 2 (sección 4.8) agrega justamente eso: revelar
+contacto y confirmaciones comunitarias.
+
+### 4.8 Mascotas — Fase 2: confirmaciones, avistamientos, posible coincidencia, revelar contacto
+
+Un subagente Plan validó este diseño línea por línea contra el código ya fusionado de Fase 1 antes
+de implementarlo (mismo criterio que el propio Fase 1) y corrigió varios puntos concretos, todos ya
+incorporados abajo.
+
+**`PetConfirmation`** — reusa `ConfirmationType` (el mismo enum que `ReportConfirmation`: `confirm`/
+`unsure`/`incorrect`) en vez de un enum nuevo casi duplicado, aunque la UI de mascotas nunca ofrezca
+"unsure". `confirmPet(petId, actor, type)` es el mismo patrón exacto que `confirmReport`: sin
+`actor.userId`, exige nombre + (correo o celular), resuelve guest vía `resolveGuestContact`, 409 si
+se repite `(petReportId, userId, type)`. Si `type === "confirm"`, actualiza `lastConfirmedAt` y
+llama `rewardUsefulConfirmation` — decisión explícita: sí se reusa para mascotas, porque
+`UserReputation` es un score de *usuario* (buen comportamiento comunitario), no de *reporte*, así
+que confirmar una mascota es la misma señal que confirmar un reporte. `GET /api/pets/:id` (solo el
+detalle, nunca el listado — evitaría un N+1 sobre hasta 100 filas) gana `confirmationsCount`/
+`incorrectCount` vía dos `prisma.petConfirmation.count()` dirigidos.
+
+**`PetSighting`** ("LA VI AQUÍ") — `userId` **nunca null**: igual que `PetConfirmation`, un
+avistamiento sin sesión resuelve una identidad guest, a diferencia de `PetShareEvent` (telemetría
+pura que sí acepta anónimo real sin ninguna identidad). Nunca expone quién lo reportó — mismo
+criterio que `needCommitments`, que anonimiza a "un colaborador" en vez de un nombre real; no hay
+precedente en todo el schema de denormalizar un `displayName` snapshot, así que tampoco se agregó
+acá.
+
+**`findPossibleMatches(pet, {sameType})`** — bounding-box + Haversine sobre `lat`/`lng`, mismo
+cálculo que `findNearbyReports` en `reports.service.ts`. Filtra por `species` igual, `hidden: false`,
+`deletedAt: null`, `id: { not: pet.id }`, ventana de fecha de 30 días sobre
+`happenedAt ?? createdAt` en ambos lados, tope `take: 500` (mismo que `findNearbyReports`).
+Clasifica cada mascota en "lado perdida" (`status: lost`) o "lado encontrada" (`sighted`/
+`sheltered`/`found`) — **independiente de `reportType`** (una `found` resguardada sigue del lado
+"encontrada"); `needs_help`/`reunited`/`possible_match`/`closed`/`outdated` no participan del
+emparejamiento. `sameType: false` busca el lado opuesto (esto — Fase 2, "posibles coincidencias"
+lost↔found); `sameType: true` busca el mismo lado (Fase 4, sección 4.10, detección de duplicados) —
+**la misma función alimenta las dos fases**, calculada al leer, nunca persistida ni en un cron.
+`GET /api/pets/:id/possible-matches` es público.
+
+**Revelar contacto** (`POST /api/pets/:id/reveal-contact`) — decisión de producto explícita
+(consultada con el usuario): mostrar el correo/celular real de quien reportó, con una advertencia,
+en vez de construir un sistema de mensajería interno completo. Quien lo pide —con o sin sesión—
+debe traer su propio nombre + contacto, mismo patrón anti-scrape que confirmar. Dos riesgos reales
+que el propio diseño ya corrige:
+- **Nunca filtra el correo sintético de un invitado que solo dio celular** — si
+  `creator.email === syntheticEmailForPhone(creator.phone)`, se omite `email` de la respuesta
+  (si no, se mostraría `tel-XXXX@guest.aquiayudamosve.local` como si fuera un correo real, violando
+  el invariante documentado en `lib/guestIdentity.ts`).
+- **`revealContactLimiter` (5/hora por IP) nunca se salta con sesión activa** — a diferencia de
+  `guestActionLimiter` (que sí se salta a sí mismo si hay `req.user`, porque `confirmationLimiter` ya
+  cubre ese caso), acá cualquier cuenta autenticada podría rasparse contactos igual de rápido que un
+  invitado si se copiara ese mismo patrón — así que este limiter aplica siempre, sin excepción.
+
+Escribe `AuditLog` (`pet.contact_revealed`, `metadata: {revealedToUserId}`) — **nunca** re-guarda el
+correo/celular revelado en el log: ese dato ya vive en `User`, duplicarlo en un `Json` de auditoría
+(visible a cualquier moderador vía `/api/admin/audit-logs`) sería una segunda copia sin protección
+de algo ya sensible.
+
+`possible_match` (existía en el enum desde Fase 1, sin ningún código que lo asignara) ahora es
+seleccionable en el selector de estado del frontend.
+
+### 4.9 Mascotas — Fase 3: directorio "quiero ayudar con mascotas"
+
+**`PetResource`** — veterinarios, transporte, hogares temporales, puntos de atención, rescate.
+**`requireAuth` para crear**: ofrecer un servicio compromete tu identidad, a diferencia de reportar
+una mascota (que sigue siendo anónimo-friendly). Sin `lat`/`lng` — es cobertura de
+departamento/municipio (catálogo), no un pin exacto; no aplica el mismo criterio de
+`LocationSelector` que exige un pin en los 3 modos. Moderación (`hidden`/`deletedAt`) espeja
+`PetReport` — **no `Organization`**, que hoy es un archivo plano de 2 endpoints solo-admin sin
+`hidden`, sin filtros y sin moderación; el precedente real de estructura es
+`pets.service.ts`/`pets.schemas.ts`/`pets.routes.ts`/`petModeration.routes.ts`, con el mismo split
+en 4 archivos (`petResources.schemas.ts`, `petResources.service.ts`, `petResources.routes.ts`,
+`petResourceModeration.routes.ts`).
+
+`PetResourceCategory` es un enum **distinto** de `PetHelpCategory` aunque los valores mayormente se
+reflejen — uno describe demanda (qué necesita una mascota), el otro oferta (qué ofrece alguien);
+`shelter` (demanda) mapea a `temporary_home` (oferta), `food`/`water` (demanda, sin equivalente
+directo) caen a `attention_point`. "Contacto de correo o celular" vive en el service, no en el
+schema Zod — mismo motivo que `NEEDS_ANY_HELP` en `pets.service.ts`: `validateBody` está tipado
+`AnyZodObject`, no acepta `.refine()`. Toda creación deja `AuditLog` (`pet_resource.create`) — mismo
+criterio que `pet.create`/`report.create`, omitirlo sería el mismo tipo de hueco que el "AuditLog
+remedy gap" de Fase 1.
+
+`app.ts` monta `/api/pets/resources` **antes** de `/api/pets` a propósito: Express prueba los
+`app.use()` en orden de registro, y `/api/pets` ya matchea cualquier ruta que empiece por ese
+prefijo — sin este orden, `GET /api/pets/resources` caería dentro de `pets.routes.ts`'s `GET /:id`
+(tratando `"resources"` como un id) antes de llegar nunca al router correcto. Mismo tipo de fix que
+`/r/mascota` antes de `/r` en Fase 1.
+
+### 4.10 Mascotas — Fase 4: alertas de cercanía + fusión de duplicados
+
+**Sin migración nueva** — ambas piezas reusan mecanismos que ya existen. Dos decisiones de alcance
+se resolvieron con el usuario antes de implementar (`AskUserQuestion`, no se repiten después):
+alertas de cercanía reusan `broadcastPush()` tal cual (broadcast a todas las suscripciones, sin
+segmentación por usuario/ubicación — `PushSubscription` no tiene `userId` ni lo va a tener en esta
+fase), y revelar contacto (Fase 2) usa revelado directo, no mensajería.
+
+**Alertas de cercanía**: dado que `createPetReport` ya dispara un push en cada creación desde Fase
+1, la única pieza nueva es: después de crear, llamar `findPossibleMatches(pet, {sameType: false})`
+y, si hay al menos un match, un **segundo** push (fire-and-forget, nunca esperado, nunca más de uno
+por creación sin importar cuántos matches haya) con copy distinto ("Podría haber una coincidencia
+cerca"). Bajo la opción elegida (sin segmentación), esto es intencionalmente modesto — se documenta
+así explícitamente, no es una omisión.
+
+**`GET /api/admin/pets/duplicates`** (`findDuplicatePets()`) — bajo demanda, nunca en cada carga del
+panel de admin (escanear pares es más caro que un listado normal): para cada mascota activa con
+`status` en `lost`/`sighted`/`sheltered`/`found` (tope 200, ordenadas por `createdAt desc`), corre
+`findPossibleMatches(pet, {sameType: true})`, dedup de pares `(a,b)`≡`(b,a)`. Nota: qué mascota cae
+en `pair.a` vs `pair.b` depende del orden de iteración (`createdAt desc`), no de cuál se creó
+"primero" en términos humanos — el frontend solo necesita mostrar el par, no asumir un orden
+semántico.
+
+**`PATCH /api/admin/pets/:id/merge`** (`mergePetReports`) — body `{intoId, reason}`. Valida que
+ambas existan y compartan `species` (guard contra fusionar mascotas no relacionadas por error).
+Soft-delete del `id` de la URL (`deletedAt`), `intoId` sobrevive; un `AuditLog`
+(`pet.moderation.merge`, `metadata: {mergedIntoId, reason}`). **Deliberadamente sin** un campo
+`mergedIntoId` persistido en `PetReport` para redirigir un enlace viejo — no existe ningún flujo de
+"deshacer" para `delete` en todo el backend, ni en reportes ni en mascotas, así que un enlace
+guardado a un reporte fusionado da 404 igual que cualquier otro soft-delete hoy; agregar un puntero
+de redirect solo para mascotas hubiera sido inconsistente con ese precedente, no más simple.
 
 ## 5. Base de datos — modelo completo (`backend/prisma/schema.prisma`)
 
@@ -588,7 +706,10 @@ columna existente de `Report`, ver "Compromisos de ayuda" en 4.2) →
 `pet_report_hidden_flag` (columna `hidden` en `PetReport`, agregada como segunda migración chica
 después de notar, ya implementando el service, que `PetStatus` no tenía ningún valor libre para
 moderación — más seguro que editar la migración anterior ya aplicada, que hubiera generado drift en
-el checksum que Prisma guarda por migración).
+el checksum que Prisma guarda por migración) →
+`pet_confirmations_sightings` (tablas nuevas `PetConfirmation`/`PetSighting`, sin backfill, ver 4.8) →
+`pet_resources` (tabla nueva `PetResource` + enum `PetResourceCategory`, sin backfill, ver 4.9).
+Fase 4 (sección 4.10) no agregó ninguna migración — reusa columnas/tablas ya existentes.
 
 | Modelo | Para qué |
 |---|---|
@@ -611,6 +732,9 @@ el checksum que Prisma guarda por migración).
 | `PushSubscription` | Suscripción push por endpoint, sin dueño |
 | `PetReport` | Mascota perdida/encontrada/herida/necesita ayuda — ver 4.7 |
 | `PetShareEvent` | Telemetría best-effort de compartir un `PetReport`, propio (no reusa `ShareEvent`) — ver 4.7 |
+| `PetConfirmation` | confirm/incorrect sobre una mascota, único por (mascota, usuario, tipo) — ver 4.8 |
+| `PetSighting` | "LA VI AQUÍ" — avistamiento con ubicación opcional, autor nunca expuesto — ver 4.8 |
+| `PetResource` | Recurso del directorio "quiero ayudar con mascotas" — ver 4.9 |
 
 `ReputationLevel` (enum): `nuevo` → `colaborador` → `colaborador_confiable` →
 `voluntario_verificado` → `organizacion` → `entidad_institucional`.
@@ -627,7 +751,10 @@ Enums de mascotas (ver 4.7): `PetReportType` (`lost`/`found`/`injured`/`needs_he
 (`dog`/`cat`/`bird`/`rabbit`/`horse`/`other`), `PetSex` (`male`/`female`/`unknown`), `PetSize`
 (`small`/`medium`/`large`), `PetStatus` (`lost`/`sighted`/`sheltered`/`possible_match`/`found`/
 `reunited`/`needs_help`/`closed`/`outdated`), `PetHelpCategory` (`veterinary`/`food`/`water`/
-`transport`/`shelter`/`rescue`/`other`).
+`transport`/`shelter`/`rescue`/`other`). `PetConfirmation.type` reusa `ConfirmationType` (arriba,
+mismo enum que `ReportConfirmation`), no uno propio (ver 4.8). `PetResourceCategory` (ver 4.9):
+`veterinary`/`transport`/`temporary_home`/`attention_point`/`rescue`/`other` — enum aparte de
+`PetHelpCategory` aunque los valores se reflejen mayormente (demanda vs. oferta).
 
 ## 6. Frontend — arquitectura
 
@@ -658,7 +785,7 @@ frontend/src/
     PetStatusBadge.tsx          — pill de PetStatus, ver 6.13
     PetMapLayer.tsx             — mapa Leaflet propio para /mascotas (no generaliza MapView.tsx), ver 6.13
     PetShareSheet.tsx           — casi duplicado de ShareSheet.tsx apuntando a los endpoints de mascotas, ver 6.13
-    petStatusStyle.ts           — PET_STATUS_META + labels de species/reportType/helpCategory — a diferencia de needStatusStyle.ts, acá el texto SÍ vive en el frontend (el backend nunca calculó labels para mascotas), ver 6.13
+    petStatusStyle.ts           — PET_STATUS_META + labels de species/reportType/helpCategory/resourceCategory + HELP_TO_RESOURCE_CATEGORY — a diferencia de needStatusStyle.ts, acá el texto SÍ vive en el frontend (el backend nunca calculó labels para mascotas), ver 6.13/6.15
   data/colombiaLocations.ts   — catálogo departamento→municipios de Colombia, ver 6.8
   utils/
     time.ts                  — relativeTime() ("hace 5 min")
@@ -693,7 +820,9 @@ Un único `request<T>()` centraliza todo el fetch. Detalles importantes:
 | `/privacidad` | `PrivacyPolicyPage` | público — Habeas Data, ver 6.12 |
 | `/mascotas` | `PetsPage` | público (con o sin cuenta) — ver 6.13 |
 | `/mascotas/reportar` | `PetReportPage` | público (con o sin cuenta) — ver 6.13 |
-| `/mascotas/:id` | `PetDetailPage` | lectura pública; cambiar estado requiere sesión — ver 6.13 |
+| `/mascotas/ayudar` | `PetResourcesPage` | público — directorio de recursos, ver 6.15 |
+| `/mascotas/ayudar/nuevo` | `PetResourceFormPage` | requiere sesión — ver 6.15 |
+| `/mascotas/:id` | `PetDetailPage` | lectura pública; confirmar/avistar/revelar contacto son públicos (ver 6.14), cambiar estado requiere sesión — ver 6.13 |
 
 ### 6.3 Publicar sin cuenta (frontend)
 
@@ -945,10 +1074,11 @@ igual (que es la obligación central de Habeas Data) sin bloquear el flujo.
 ### 6.13 Mascotas (frontend)
 
 **`PetsPage.tsx`** (`/mascotas`) — 3 acciones principales (PERDÍ MI MASCOTA / ENCONTRÉ UNA MASCOTA /
-NECESITA AYUDA — **sin** "QUIERO AYUDAR", eso es Fase 3 del documento, sin `PetResource` todavía),
-filtros de departamento/municipio (mismo patrón que `HomePage`) + chips por `reportType`, lista de
-`PetCard`, y un mapa propio (`PetMapLayer`, ver abajo) — mascotas **no** se mete en los filtros del
-mapa principal de reportes, tiene el suyo, más chico.
+NECESITA AYUDA — Fase 1 las publicó **sin** "QUIERO AYUDAR" a propósito; Fase 3 lo reintrodujo como
+un botón secundario debajo, ver 6.15), filtros de departamento/municipio (mismo patrón que
+`HomePage`) + chips por `reportType`, lista de `PetCard`, y un mapa propio (`PetMapLayer`, ver
+abajo) — mascotas **no** se mete en los filtros del mapa principal de reportes, tiene el suyo, más
+chico.
 
 **`PetReportPage.tsx`** (`/mascotas/reportar?type=lost|found|needs_help`) — una sola página con
 secciones reveladas progresivamente (mismo patrón que `ReportFormPage.tsx`, no un wizard separado
@@ -973,8 +1103,9 @@ cuando `status === "reunited"` ("🎉 ¡Nombre ya volvió a casa!") + botón COM
 sesión para actualizar el estado" en su lugar) — a diferencia de confirmar reportes (6.11, que se
 abrió del todo), cambiar el estado de una mascota **sigue** pidiendo cuenta, mismo criterio que
 `updateNeedStatus` de reportes (6.7): es una acción con más impacto por intento que un simple voto.
-El select de estados excluye `possible_match` a propósito — Fase 2, ningún flujo de Fase 1 lo
-produce ni lo consume.
+Fase 2 (6.14) agrega confirmar/avistar/revelar contacto/posibles coincidencias a esta misma página —
+el select de estados ya incluye `possible_match`, que Fase 1 excluía a propósito por no tener aún
+ningún flujo que lo produjera.
 
 **`PetMapLayer.tsx`** — copia del setup de Leaflet ya probado en `MapView.tsx` (`CircleMarker`,
 nunca `Marker` — mismo bug de íconos rotos con Vite) en vez de generalizar ese componente, que está
@@ -994,6 +1125,75 @@ mobile). `HomePage.tsx` gana una sección propia "🐾 Mascotas" (no una 5ª tar
 apilada con su propia tabla (`PetsTable`, no una generalización de `ReportsTable`, que está tipada a
 `Report[]` con columnas específicas como `TrustBadge`) — solo hide/unhide/delete, sin
 markFalse/resolve (conceptos de `trustScore` que mascotas no tiene).
+
+### 6.14 Mascotas — Fase 2 (frontend)
+
+`PetDetailPage.tsx` es la primera vez que el módulo de mascotas se conecta a `GuestContactContext`/
+`GuestConfirmModal` (Fase 1 nunca los usaba). Todas las acciones nuevas de esta fase —confirmar,
+marcar incorrecto, avistar, revelar contacto— comparten un único despachador: un tipo `PendingAction`
+(`{kind: "confirm", type} | {kind: "sighting", lat?, lng?, note?} | {kind: "reveal"}`) +
+`runGuestGated(action)` (si no hay `profile` ni `guestContact` ya recordado, guarda la acción
+pendiente y abre el modal; si ya hay uno de los dos, corre directo) + `performAction(action, contact?,
+honeypot?)` (arma el `guest` payload con `getRecaptchaToken` solo si hay `contact`, y hace el fetch
+correspondiente según `action.kind`). Mismo patrón que `confirmAsGuestOrUser` en
+`ReportDetailPage.tsx`, generalizado a 3 acciones en vez de 1.
+
+- **Confirmar/marcar incorrecto** — botones "✓ CONFIRMAR"/"REPORTAR INCORRECTO", mismo estilo que
+  reportes. `pet.confirmationsCount`/`incorrectCount` (`?: number` en el tipo `PetReport` — solo
+  presentes cuando el pet vino de `GET /api/pets/:id`, nunca del listado, ver 4.8) se muestran junto
+  a "Última actualización".
+- **"LA VI AQUÍ"** — solo se ofrece cuando `pet.reportType === "lost"` (un avistamiento no tiene
+  sentido narrativo para una mascota ya encontrada). Botón "📍 Usar mi ubicación"
+  (`navigator.geolocation`, mismo patrón que `LocationSelector`/`HomePage`) + una nota de texto —
+  **sin** el `LocationSelector` completo de 3 modos, que es demasiado para un avistamiento rápido.
+  Timeline debajo, anonimizado (nunca se pide ni se muestra quién lo reportó).
+- **Posibles coincidencias** — panel que solo aparece si `getPossibleMatches` devuelve algo (nunca un
+  estado vacío visible), mini-tarjetas con distancia en km, enlazan al candidato.
+- **Revelar contacto** — botón "VER CONTACTO" abre una advertencia explícita primero
+  (`revealWarningOpen`, "vas a ver el nombre y correo o celular... úsalo con respeto") con un botón
+  de confirmación separado ("Sí, mostrar contacto") antes de llamar a la API — nunca revela de
+  inmediato al primer clic.
+
+`api/client.ts` gana `confirmPet`, `createPetSighting`, `getPetSightings`, `getPossibleMatches`,
+`revealPetContact`. `types.ts` gana `PetSighting`, `PossibleMatch` (`PetReport` + `distanceMeters`),
+`RevealedPetContact` (`email`/`phone` opcionales — puede faltar el correo si el creador es un guest
+que solo dio celular, ver 4.8).
+
+### 6.15 Mascotas — Fase 3 (frontend)
+
+`PetsPage.tsx` reintroduce "🤝 QUIERO AYUDAR" como botón secundario (no un 4º botón del mismo peso
+que los 3 de reportar — es una acción conceptualmente distinta) → navega a `/mascotas/ayudar`.
+
+**`PetResourcesPage.tsx`** (`/mascotas/ayudar`) — directorio público filtrable por
+categoría/departamento/municipio (mismo patrón de filtros que `PetsPage`). CTA "+ Ofrecer ayuda" si
+hay `profile`, o "Inicia sesión para ofrecer ayuda" si no (mismo patrón que el control de estado en
+`PetDetailPage.tsx`, no una redirección forzada).
+
+**`PetResourceFormPage.tsx`** (`/mascotas/ayudar/nuevo`) — si `!profile`, muestra un mensaje +
+botón "Inicia sesión" en vez del formulario (guard a nivel de componente, no solo de ruta). Categoría
+por botones tipo chip (igual que `PetReportPage.tsx`'s selector de especie), `contactName` precargado
+de `profile.displayName` (editable — `Profile` no expone email, así que igual hay que escribirlo a
+mano).
+
+`PetDetailPage.tsx` gana una sección "Recursos que podrían ayudar" para mascotas `needs_help`/
+`injured`: un `useEffect` separado (no puede ir en el `load()` inicial — depende de
+`pet.helpCategory`, que no se conoce hasta que el pet mismo cargó) llama
+`getPetResources({category: HELP_TO_RESOURCE_CATEGORY[pet.helpCategory], departmentName})`. Sin
+scoring, primeros 6 resultados.
+
+`AdminPage.tsx` gana `PetResourcesTable` (mismo patrón que `PetsTable`: hide/unhide/delete, sin
+markFalse/resolve).
+
+### 6.16 Mascotas — Fase 4 (frontend)
+
+`AdminPage.tsx` gana una sección "Posibles duplicados" — **cargada bajo demanda** vía un botón
+("Buscar posibles duplicados"), nunca en el `load()` inicial del panel (escanear pares es más caro
+que un listado normal, ver 4.10). Cada par ofrece dos botones, "Fusionar A → B" y "Fusionar B → A"
+— quien modera elige cuál sobrevive; no hay un default "correcto" porque cuál de los dos es
+`pair.a`/`pair.b` depende del orden de iteración del backend (`createdAt desc`), no de cuál se
+reportó "primero" en un sentido humano.
+
+`api/client.ts` gana `getPetDuplicates()` y `mergePets(id, intoId, reason)`.
 
 ## 7. Flujos de punta a punta
 
@@ -1040,12 +1240,29 @@ rápido del home (se encuentra filtrando por su departamento/municipio o navegan
 **Reportar y reunificar una mascota:** usuario en `/mascotas` sin sesión → PERDÍ MI MASCOTA →
 `/mascotas/reportar?type=lost` con foto + ubicación + nombre/correo → `POST /api/pets` (multipart,
 sin `Authorization`) → `resolveGuestContact` crea/reutiliza un `User` guest (mismo mecanismo que
-reportes) → `status: "lost"` → aparece en `/mascotas` y en su mapa → cualquiera con cuenta comparte
-por WhatsApp (`PetShareSheet`, genera pieza + texto) → alguien la reconoce por la pieza compartida
-(sin mecanismo de contacto en Fase 1 — la reunificación depende de que el enlace llegue a la persona
-correcta) → una persona con cuenta entra al detalle y cambia el estado a `reunited` (comunitario, no
-solo el creador) → banner de cierre "🎉 ya volvió a casa" + el cambio queda en `AuditLog` para
-moderación si hiciera falta revertirlo.
+reportes) → `status: "lost"` → si ya existe una mascota `found` cerca de la misma especie, un
+segundo push avisa "podría haber una coincidencia" (Fase 4, 4.10) → aparece en `/mascotas` y en su
+mapa → cualquiera con cuenta comparte por WhatsApp (`PetShareSheet`, genera pieza + texto) → alguien
+la reconoce, por el push, por la pieza compartida, o navegando el panel "Posibles coincidencias" del
+detalle (Fase 2, 4.8) → pide ver el contacto de quien reportó (advertencia explícita antes de
+mostrarlo) y coordinan por fuera de la plataforma → una persona con cuenta entra al detalle y cambia
+el estado a `reunited` (comunitario, no solo el creador) → banner de cierre "🎉 ya volvió a casa" +
+el cambio queda en `AuditLog` para moderación si hiciera falta revertirlo.
+
+**Confirmar, avistar y detectar duplicados (Fase 2/4):** cualquier visitante del detalle de una
+mascota puede confirmar/marcar incorrecto (mismo criterio sin cuenta que reportes) o reportar un
+avistamiento ("LA VI AQUÍ") con o sin ubicación — ambos resuelven una identidad guest la primera vez
+y la recuerdan el resto de la visita (`GuestContactContext`). Un moderador en `/admin` carga bajo
+demanda "Posibles duplicados" (mismo motor de emparejamiento que "posibles coincidencias", pero
+comparando mascotas del mismo lado del ciclo de vida en vez de lados opuestos) y fusiona dos reportes
+de la misma mascota — el que se fusiona queda con `deletedAt`, 404 público, y la fusión queda en
+`AuditLog` (`pet.moderation.merge`).
+
+**Ofrecer ayuda con mascotas (Fase 3):** una persona con cuenta va a `/mascotas/ayudar` → "+ Ofrecer
+ayuda" → registra un `PetResource` (veterinaria, transporte, hogar temporal, punto de atención o
+rescate) con contacto y cobertura territorial → aparece en el directorio público y, si su categoría
+coincide con el `helpCategory` de una mascota `needs_help`/`injured` en el mismo departamento, en la
+sección "Recursos que podrían ayudar" del detalle de esa mascota.
 
 ## 8. Desarrollo local
 
@@ -1217,13 +1434,45 @@ migraciones; el admin real se crea aparte con password generada.
   4.7/6.13), solo que el caso "con imagen real" no se puede verificar end-to-end sin credenciales de
   Supabase Storage reales — verificado a mano con un script suelto (mismo criterio que 4.6) en vez
   de vía HTTP.
-- **Sin mecanismo de contacto directo entre quien reporta y quien encuentra/reconoce una mascota en
-  Fase 1** — confirmado explícitamente con el usuario durante la planeación, no una omisión. El
-  documento fuente tampoco lo especifica (lo deja abierto para una fase posterior). La reunificación
-  depende de que la pieza compartida por WhatsApp circule y llegue a la persona correcta, igual que
-  ya pasa hoy de forma orgánica en los grupos comunitarios — un mecanismo de contacto (revelar
-  correo/celular con advertencia, o "reportar posible coincidencia") queda como el primer punto de
-  Fase 2, junto con las confirmaciones comunitarias que esa fase agrega.
+- **Fase 1 se publicó sin mecanismo de contacto directo entre quien reporta y quien encuentra una
+  mascota** — confirmado explícitamente con el usuario durante la planeación, no una omisión. La
+  reunificación dependía de que la pieza compartida por WhatsApp circulara y llegara a la persona
+  correcta. Fase 2 agregó justo eso (revelar contacto, 4.8) una vez confirmado que el flujo base ya
+  funcionaba.
+- **Revelar contacto directo (Fase 2) en vez de mensajería interna** — decisión de alcance explícita,
+  consultada con el usuario antes de implementar: mostrar el correo/celular real de quien reportó,
+  con una advertencia, reutiliza el dato que ya se captura al reportar y no requiere construir un
+  sistema de mensajería (hilos, bandeja de entrada, notificar cada mensaje nuevo). El costo es que sí
+  expone un dato de contacto real a un desconocido — mitigado con la advertencia explícita antes de
+  revelar y el rate limiter dedicado que nunca se salta con sesión activa.
+- **Alertas de cercanía (Fase 4) reusan `broadcastPush()` sin segmentación, otra decisión de alcance
+  consultada explícitamente** — la alternativa (agregar `userId` opcional a `PushSubscription` para
+  poder avisarle específicamente al creador de un reporte que hace match) hubiera cumplido más
+  literalmente "alerta de cercanía", pero es un cambio de esquema + una superficie de prueba mucho
+  mayor para una fase que el documento mismo trata como exploratoria. Bajo la opción elegida, la
+  única pieza nueva de verdad es un segundo push al crear si ya hay un posible match — Fase 1 ya
+  cubría el push base de "mascota nueva".
+- **`findPossibleMatches` alimenta tanto "posibles coincidencias" (Fase 2, lados opuestos) como
+  "posibles duplicados" (Fase 4, mismo lado) — una sola función, un solo parámetro (`sameType`).**
+  No se escribieron dos motores de emparejamiento separados aunque sirven a audiencias y decisiones
+  distintas (cualquier visitante vs. solo moderadores) — el cálculo geoespacial+temporal+especie es
+  idéntico, solo cambia qué "lado" del ciclo de vida se compara contra cuál.
+- **`PetConfirmation`/`PetSighting` reusan `ConfirmationType` (el enum de `ReportConfirmation`) y
+  exigen `userId` no-nulo, respectivamente, en vez de inventar variantes propias** — un subagente
+  Plan encontró ambos casos durante la validación del diseño: un segundo enum con 2 de 3 valores
+  hubiera sido duplicación pura, y todo el resto del schema resuelve una identidad guest real para
+  cualquier acción no puramente-telemetría (la única excepción genuina es `PetShareEvent`/
+  `ShareEvent`, que sí es telemetría pura).
+- **El directorio de recursos (Fase 3) espeja la estructura de `pets.service.ts` (schemas/service/
+  routes/moderación en 4 archivos), no la de `Organization`** — aunque ambos son "alguien ofrece
+  algo", `Organization` hoy es un archivo plano de 2 endpoints solo-admin, sin `hidden`, sin filtros
+  y sin moderación; copiar esa forma hubiera dejado el directorio de recursos con menos estructura de
+  la que realmente necesita (listado público filtrable + moderación hide/unhide/delete).
+- **Fusión de duplicados (Fase 4) no agrega un puntero `mergedIntoId` para redirigir un enlace
+  viejo** — se evaluó y se descartó explícitamente: no existe ningún flujo de "deshacer" para
+  `delete` en todo el backend, ni en reportes ni en mascotas, así que un enlace guardado a un reporte
+  ya fusionado da 404 igual que cualquier otro soft-delete hoy. Agregar el puntero solo para mascotas
+  hubiera sido una excepción a ese precedente, no una simplificación.
 
 ## 11. Subagentes de Claude Code en este repo (`.claude/agents/`)
 

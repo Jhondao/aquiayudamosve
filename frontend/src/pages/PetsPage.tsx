@@ -87,6 +87,13 @@ export default function PetsPage() {
         </button>
       </div>
 
+      <button
+        onClick={() => navigate("/mascotas/ayudar")}
+        className="mt-2 h-12 w-full rounded-xl border border-accent bg-accent/10 px-4 text-sm font-bold text-accent active:scale-[0.98]"
+      >
+        🤝 QUIERO AYUDAR — veterinarios, transporte, hogares temporales
+      </button>
+
       {error && <p className="mt-4 rounded-lg bg-danger/20 px-3 py-2 text-sm text-danger">{error}</p>}
 
       <div className="mt-8">

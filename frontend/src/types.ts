@@ -150,6 +150,53 @@ export interface PetReport {
   createdById: string;
   createdAt: string;
   lastConfirmedAt: string;
+  // Solo presentes cuando el pet viene de GET /api/pets/:id (detalle) — el
+  // listado/mapa no los calcula, evita un N+1 sobre hasta 100 filas (ver
+  // pets.service.ts#getPetReport).
+  confirmationsCount?: number;
+  incorrectCount?: number;
+}
+
+// "LA VI AQUÍ", Fase 2 — nunca expone quién lo reportó (ver
+// pets.service.ts#serializeSighting).
+export interface PetSighting {
+  id: string;
+  lat: number | null;
+  lng: number | null;
+  note: string | null;
+  createdAt: string;
+}
+
+export interface PossibleMatch extends PetReport {
+  distanceMeters: number;
+}
+
+// Revelar contacto, Fase 2 — email puede faltar si el creador es un guest
+// que solo dio celular (correo sintético, nunca se expone — ver
+// pets.service.ts#revealPetContact).
+export interface RevealedPetContact {
+  displayName: string;
+  email?: string;
+  phone?: string;
+}
+
+// "Quiero ayudar con mascotas", Fase 3 — distinto de PetHelpCategory (esto
+// describe oferta, no demanda), aunque los valores mayormente se reflejen.
+export type PetResourceCategory = "veterinary" | "transport" | "temporary_home" | "attention_point" | "rescue" | "other";
+
+export interface PetResource {
+  id: string;
+  category: PetResourceCategory;
+  name: string;
+  description: string;
+  contactName: string;
+  contactEmail: string | null;
+  contactPhone: string | null;
+  departmentName: string;
+  municipalityName: string;
+  availabilityNote: string | null;
+  createdById: string;
+  createdAt: string;
 }
 
 export type PetShareStatus = "lost" | "found" | "reunited" | "needs_help";

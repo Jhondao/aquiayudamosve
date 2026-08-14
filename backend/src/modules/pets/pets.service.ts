@@ -1,8 +1,9 @@
 import { Prisma } from "@prisma/client";
 import { prisma } from "../../lib/prisma";
 import { HttpError } from "../../middleware/errorHandler";
-import { coarsenCoordinates } from "../../utils/geo";
+import { coarsenCoordinates, haversineMeters } from "../../utils/geo";
 import { resolveGuestContact, syntheticEmailForPhone } from "../../lib/guestIdentity";
+import { rewardUsefulConfirmation } from "../trust/reputation.service";
 import { broadcastPush } from "../../lib/push";
 import { persistPetPhoto } from "./uploads";
 import type { PetHelpCategoryValue, PetReportTypeValue, PetSexValue, PetSizeValue, PetSpeciesValue, PetStatusValue } from "./pets.schemas";
@@ -155,6 +156,23 @@ export async function createPetReport(
     url: `/mascotas/${pet.id}`,
   }).catch(() => {});
 
+  // Alertas de cercanía, Fase 4 — bajo la opción elegida (reusar
+  // broadcastPush tal cual, sin push dirigido por usuario/ubicación, ver
+  // plan), la única pieza nueva es esta: si el reporte recién creado tiene
+  // una posible coincidencia ya esperando, un segundo push distinto — nunca
+  // más de uno por creación sin importar cuántos matches haya, y nunca
+  // esperado (fire-and-forget, mismo .catch(() => {}) que el de arriba).
+  findPossibleMatches(pet, { sameType: false })
+    .then((matches) => {
+      if (matches.length === 0) return;
+      return broadcastPush({
+        title: "🐾 Podría haber una coincidencia",
+        body: `Hay una mascota reportada cerca de ${pet.municipalityName}, ${pet.departmentName} que podría coincidir.`,
+        url: `/mascotas/${pet.id}`,
+      });
+    })
+    .catch(() => {});
+
   return serializePetReport(pet);
 }
 
@@ -190,10 +208,19 @@ export async function listPetReports(filters: {
   return { pets: pets.map(serializePetReport), total, page: filters.page, pageSize: filters.pageSize };
 }
 
+// confirmationsCount/incorrectCount solo se calculan acá, no en
+// listPetReports/listAllPetReports — 2 counts dirigidos por fila está bien
+// en un detalle, pero sumaría un N+1 real sobre hasta 100 filas de un
+// listado. El mapa/tarjetas no necesitan este número, solo el indicador de
+// confianza del detalle.
 export async function getPetReport(id: string) {
   const pet = await loadPetReport(id);
   if (pet.hidden) throw new HttpError(404, "Reporte de mascota no encontrado.");
-  return serializePetReport(pet);
+  const [confirmationsCount, incorrectCount] = await Promise.all([
+    prisma.petConfirmation.count({ where: { petReportId: id, type: "confirm" } }),
+    prisma.petConfirmation.count({ where: { petReportId: id, type: "incorrect" } }),
+  ]);
+  return { ...serializePetReport(pet), confirmationsCount, incorrectCount };
 }
 
 /**
@@ -266,4 +293,269 @@ export async function moderatePetReport(
   if (action === "delete") return null;
   const updated = await prisma.petReport.findUniqueOrThrow({ where: { id } });
   return { ...serializePetReport(updated), hidden: updated.hidden };
+}
+
+/**
+ * Confirmar/marcar incorrecto, Fase 2 — mismo criterio que confirmReport en
+ * reportes: sin cuenta, exige nombre + (correo o celular). Primera señal de
+ * confianza para mascotas, deliberadamente sin trustScore/decay como el de
+ * reportes — solo un conteo simple (ver getPetReport arriba).
+ */
+export async function confirmPet(
+  petId: string,
+  actor: { userId?: string; email?: string; phone?: string; displayName?: string },
+  type: "confirm" | "incorrect"
+) {
+  let userId = actor.userId;
+  if (!userId) {
+    if (!actor.email && !actor.phone) {
+      throw new HttpError(400, "Agrega tu nombre y tu correo o celular para confirmar sin cuenta.");
+    }
+    const email = actor.email ?? syntheticEmailForPhone(actor.phone!);
+    userId = await resolveGuestContact(email, actor.phone, actor.displayName);
+  }
+
+  const pet = await loadPetReport(petId);
+  if (pet.hidden) throw new HttpError(404, "Reporte de mascota no encontrado.");
+
+  try {
+    await prisma.petConfirmation.create({ data: { petReportId: petId, userId, type } });
+  } catch (err) {
+    if (err instanceof Prisma.PrismaClientKnownRequestError && err.code === "P2002") {
+      throw new HttpError(409, "Ya registraste este tipo de confirmación para esta mascota.");
+    }
+    throw err;
+  }
+
+  if (type === "confirm") {
+    await prisma.petReport.update({ where: { id: petId }, data: { lastConfirmedAt: new Date() } });
+    await rewardUsefulConfirmation(userId, pet.createdById);
+  }
+
+  return getPetReport(petId);
+}
+
+function serializeSighting(sighting: { id: string; lat: number | null; lng: number | null; note: string | null; createdAt: Date }) {
+  // Nunca se expone userId/displayName — mismo criterio que needCommitments,
+  // que anonimiza a "un colaborador" en vez del nombre real de quien ayudó.
+  return { id: sighting.id, lat: sighting.lat, lng: sighting.lng, note: sighting.note, createdAt: sighting.createdAt };
+}
+
+/** "LA VI AQUÍ", Fase 2 — mismo guest-resolution que confirmar, userId nunca null. */
+export async function createPetSighting(
+  petId: string,
+  actor: { userId?: string; email?: string; phone?: string; displayName?: string },
+  input: { lat?: number; lng?: number; note?: string }
+) {
+  let userId = actor.userId;
+  if (!userId) {
+    if (!actor.email && !actor.phone) {
+      throw new HttpError(400, "Agrega tu nombre y tu correo o celular para reportar un avistamiento sin cuenta.");
+    }
+    const email = actor.email ?? syntheticEmailForPhone(actor.phone!);
+    userId = await resolveGuestContact(email, actor.phone, actor.displayName);
+  }
+
+  const pet = await loadPetReport(petId);
+  if (pet.hidden) throw new HttpError(404, "Reporte de mascota no encontrado.");
+
+  const sighting = await prisma.petSighting.create({
+    data: { petReportId: petId, userId, lat: input.lat, lng: input.lng, note: input.note },
+  });
+
+  return serializeSighting(sighting);
+}
+
+export async function listPetSightings(petId: string) {
+  await getPetReport(petId); // 404 si no existe/oculta — mismo guard que el resto de sub-recursos
+  const sightings = await prisma.petSighting.findMany({
+    where: { petReportId: petId },
+    orderBy: { createdAt: "desc" },
+  });
+  return sightings.map(serializeSighting);
+}
+
+type PetReportRow = Prisma.PetReportGetPayload<Record<string, never>>;
+
+// "Lado perdida" vs. "lado encontrada" del ciclo de vida — la mascota puede
+// estar en cualquiera de los dos lados independientemente de su reportType
+// original (ej. una found+resguardada sigue del lado "encontrada"). needs_help/
+// reunited/possible_match/closed/outdated no participan del emparejamiento.
+const LOST_SIDE_STATUSES: PetStatusValue[] = ["lost"];
+const FOUND_SIDE_STATUSES: PetStatusValue[] = ["sighted", "sheltered", "found"];
+
+function sideStatuses(status: PetStatusValue, sameSide: boolean): PetStatusValue[] | null {
+  const isLostSide = LOST_SIDE_STATUSES.includes(status);
+  const isFoundSide = FOUND_SIDE_STATUSES.includes(status);
+  if (!isLostSide && !isFoundSide) return null;
+  if (sameSide) return isLostSide ? LOST_SIDE_STATUSES : FOUND_SIDE_STATUSES;
+  return isLostSide ? FOUND_SIDE_STATUSES : LOST_SIDE_STATUSES;
+}
+
+const MATCH_RADIUS_METERS = 15_000;
+const MATCH_DATE_WINDOW_DAYS = 30;
+
+/**
+ * Posibles coincidencias (Fase 2, sameType: false, lost↔found) y detección
+ * de duplicados (Fase 4, sameType: true, lost↔lost o found↔found) comparten
+ * este mismo cálculo — bounding-box + Haversine, igual que findNearbyReports
+ * en reports.service.ts. Calculado al leer, nunca persistido/cron — misma
+ * filosofía que el resto de valores derivados de este backend.
+ */
+export async function findPossibleMatches(pet: PetReportRow, options: { sameType: boolean }) {
+  const statuses = sideStatuses(pet.status, options.sameType);
+  if (!statuses) return [];
+
+  const latDelta = MATCH_RADIUS_METERS / 111_320;
+  const lngDelta = MATCH_RADIUS_METERS / (111_320 * Math.cos((pet.lat * Math.PI) / 180));
+  const effectiveDate = pet.happenedAt ?? pet.createdAt;
+  const dateFrom = new Date(effectiveDate.getTime() - MATCH_DATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+  const dateTo = new Date(effectiveDate.getTime() + MATCH_DATE_WINDOW_DAYS * 24 * 60 * 60 * 1000);
+
+  const candidates = await prisma.petReport.findMany({
+    where: {
+      id: { not: pet.id },
+      deletedAt: null,
+      hidden: false,
+      species: pet.species,
+      status: { in: statuses },
+      lat: { gte: pet.lat - latDelta, lte: pet.lat + latDelta },
+      lng: { gte: pet.lng - lngDelta, lte: pet.lng + lngDelta },
+    },
+    take: 500,
+  });
+
+  return candidates
+    .filter((c) => {
+      const cDate = c.happenedAt ?? c.createdAt;
+      return cDate >= dateFrom && cDate <= dateTo && haversineMeters(pet.lat, pet.lng, c.lat, c.lng) <= MATCH_RADIUS_METERS;
+    })
+    .map((c) => ({ ...serializePetReport(c), distanceMeters: Math.round(haversineMeters(pet.lat, pet.lng, c.lat, c.lng)) }))
+    .sort((a, b) => a.distanceMeters - b.distanceMeters);
+}
+
+export async function getPossibleMatches(petId: string) {
+  const pet = await loadPetReport(petId);
+  if (pet.hidden) throw new HttpError(404, "Reporte de mascota no encontrado.");
+  return findPossibleMatches(pet, { sameType: false });
+}
+
+/**
+ * Revelar contacto, Fase 2 — decisión de producto explícita: mostrar el
+ * correo/celular real de quien reportó en vez de construir mensajería
+ * interna (ver plan). Quien lo pide, con o sin sesión, debe traer su propio
+ * nombre+contacto (mismo patrón anti-scrape que confirmar), y el rate
+ * limiter (revealContactLimiter) NUNCA se salta para usuarios con sesión —
+ * a diferencia de guestActionLimiter, acá cualquier cuenta puede rasparse
+ * contactos igual de rápido que un invitado.
+ */
+export async function revealPetContact(
+  petId: string,
+  requester: { userId?: string; email?: string; phone?: string; displayName?: string }
+) {
+  const pet = await loadPetReport(petId);
+  if (pet.hidden) throw new HttpError(404, "Reporte de mascota no encontrado.");
+
+  let revealerId = requester.userId;
+  if (!revealerId) {
+    if (!requester.displayName || (!requester.email && !requester.phone)) {
+      throw new HttpError(400, "Agrega tu nombre y tu correo o celular para ver el contacto.");
+    }
+    const email = requester.email ?? syntheticEmailForPhone(requester.phone!);
+    revealerId = await resolveGuestContact(email, requester.phone, requester.displayName);
+  }
+
+  const creator = await prisma.user.findUniqueOrThrow({ where: { id: pet.createdById } });
+
+  // Guard contra el correo sintético de un guest que solo dio celular — ese
+  // valor (tel-XXXX@guest.aquiayudamosve.local) nunca debe mostrarse como si
+  // fuera un correo real (ver lib/guestIdentity.ts#syntheticEmailForPhone).
+  const email = creator.phone && creator.email === syntheticEmailForPhone(creator.phone) ? undefined : creator.email;
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: revealerId,
+      action: "pet.contact_revealed",
+      entityType: "pet_report",
+      entityId: petId,
+      // Nunca el correo/celular revelado acá — ya vive en User, duplicarlo
+      // en un Json de auditoría sería una segunda copia sin protección de
+      // un dato ya sensible.
+      metadata: { revealedToUserId: revealerId },
+    },
+  });
+
+  return { displayName: creator.displayName, email, phone: creator.phone ?? undefined };
+}
+
+/**
+ * Fase 4 — pares de posibles duplicados (mismo lado del ciclo de vida:
+ * lost↔lost o found↔found/sighted/sheltered), bajo demanda desde el panel
+ * de moderación — nunca eager en cada carga de AdminPage, dado el costo de
+ * escanear pares. Reusa el mismo motor que findPossibleMatches, solo con
+ * sameType: true.
+ */
+export async function findDuplicatePets() {
+  const candidates = await prisma.petReport.findMany({
+    where: {
+      deletedAt: null,
+      hidden: false,
+      status: { in: [...LOST_SIDE_STATUSES, ...FOUND_SIDE_STATUSES] },
+    },
+    orderBy: { createdAt: "desc" },
+    take: 200,
+  });
+
+  const seen = new Set<string>();
+  const pairs: { a: ReturnType<typeof serializePetReport>; b: ReturnType<typeof serializePetReport>; distanceMeters: number }[] = [];
+
+  for (const pet of candidates) {
+    // eslint-disable-next-line no-await-in-loop
+    const matches = await findPossibleMatches(pet, { sameType: true });
+    for (const match of matches) {
+      const key = [pet.id, match.id].sort().join("|");
+      if (seen.has(key)) continue;
+      seen.add(key);
+      const { distanceMeters, ...matchPet } = match;
+      pairs.push({ a: serializePetReport(pet), b: matchPet, distanceMeters });
+    }
+  }
+
+  return pairs;
+}
+
+/**
+ * Fusión de duplicados, Fase 4 — soft-delete del no-primario + AuditLog,
+ * reusa mecanismos que ya existen. Sin mergedIntoId persistido para
+ * redirect a propósito: no existe ningún flujo de "deshacer" para delete en
+ * todo el backend (ni reportes ni mascotas), así que un link a un reporte
+ * fusionado da 404 igual que cualquier otro soft-delete hoy.
+ */
+export async function mergePetReports(adminId: string, id: string, intoId: string, reason: string) {
+  if (id === intoId) throw new HttpError(400, "No puedes fusionar un reporte consigo mismo.");
+
+  const [pet, into] = await Promise.all([
+    prisma.petReport.findUnique({ where: { id } }),
+    prisma.petReport.findUnique({ where: { id: intoId } }),
+  ]);
+  if (!pet || pet.deletedAt) throw new HttpError(404, "Reporte de mascota no encontrado.");
+  if (!into || into.deletedAt) throw new HttpError(404, "Reporte de mascota destino no encontrado.");
+  // Guard contra fusionar mascotas no relacionadas por error.
+  if (pet.species !== into.species) {
+    throw new HttpError(400, "Solo se pueden fusionar reportes de la misma especie.");
+  }
+
+  await prisma.petReport.update({ where: { id }, data: { deletedAt: new Date() } });
+
+  await prisma.auditLog.create({
+    data: {
+      actorId: adminId,
+      action: "pet.moderation.merge",
+      entityType: "pet_report",
+      entityId: id,
+      metadata: { mergedIntoId: intoId, reason },
+    },
+  });
+
+  return { ...serializePetReport(into), hidden: into.hidden };
 }
