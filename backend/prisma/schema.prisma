@@ -168,6 +168,9 @@ model User {
   shareEvents       ShareEvent[]
   petReports        PetReport[]        @relation("PetReportCreatedBy")
   petShareEvents    PetShareEvent[]
+  petConfirmations  PetConfirmation[]
+  petSightings      PetSighting[]
+  petResources      PetResource[]      @relation("PetResourceCreatedBy")
   moderationActions ModerationAction[] @relation("ModerationActor")
   auditLogs         AuditLog[]         @relation("AuditActor")
   sessions          Session[]
@@ -453,10 +456,10 @@ model PushSubscription {
   createdAt DateTime @default(now())
 }
 
-// PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS, Fase 1. Deliberadamente
-// sin trustScore/confirmations — mascotas no tiene sistema de confianza
-// todavía (eso es justo lo que las confirmaciones comunitarias de Fase 2
-// agregarían), así que no hay nada que decaer por ahora.
+// PROMPT MAESTRO — MÓDULO COMUNITARIO DE MASCOTAS, Fase 1 (Fase 2 agrega
+// confirmations/sightings abajo). Deliberadamente sigue sin trustScore/decay
+// como el de Report — solo se cuenta confirm/incorrect al leer
+// (pets.service.ts), sin score 0-100 ni decaimiento por tiempo.
 model PetReport {
   id                  String           @id @default(uuid())
   reportType          PetReportType
@@ -500,8 +503,10 @@ model PetReport {
   updatedAt           DateTime         @updatedAt
   deletedAt           DateTime?
 
-  createdBy   User            @relation("PetReportCreatedBy", fields: [createdById], references: [id])
-  shareEvents PetShareEvent[]
+  createdBy     User              @relation("PetReportCreatedBy", fields: [createdById], references: [id])
+  shareEvents   PetShareEvent[]
+  confirmations PetConfirmation[]
+  sightings     PetSighting[]
 
   @@index([departmentName, municipalityName])
   @@index([status])
@@ -523,4 +528,85 @@ model PetShareEvent {
   user      User?     @relation(fields: [userId], references: [id])
 
   @@index([petReportId])
+}
+
+// Fase 2. Reusa ConfirmationType (mismo enum que ReportConfirmation) aunque
+// la UI de mascotas nunca ofrezca "unsure" — evita un enum casi duplicado.
+// Primera señal de confianza para mascotas, deliberadamente sin
+// trustScore/decay — solo se cuenta confirm/incorrect al leer.
+model PetConfirmation {
+  id          String           @id @default(uuid())
+  petReportId String
+  userId      String
+  type        ConfirmationType
+  createdAt   DateTime         @default(now())
+
+  petReport PetReport @relation(fields: [petReportId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([petReportId])
+  @@index([userId])
+  @@unique([petReportId, userId, type])
+}
+
+// "LA VI AQUÍ" — Fase 2. userId nunca null: igual que ReportConfirmation, un
+// avistamiento sin sesión resuelve una identidad guest vía
+// resolveGuestContact — a diferencia de PetShareEvent (telemetría pura, sí
+// acepta anónimo real). Nunca se expone el autor en la UI (mismo criterio
+// que needCommitments, que anonimiza a "un colaborador").
+model PetSighting {
+  id          String   @id @default(uuid())
+  petReportId String
+  userId      String
+  lat         Float?
+  lng         Float?
+  note        String?  @db.Text
+  createdAt   DateTime @default(now())
+
+  petReport PetReport @relation(fields: [petReportId], references: [id], onDelete: Cascade)
+  user      User      @relation(fields: [userId], references: [id])
+
+  @@index([petReportId])
+  @@index([userId])
+}
+
+// Fase 3 ("quiero ayudar"). Distinto de PetHelpCategory (demanda) aunque los
+// valores mayormente reflejen los mismos conceptos — este describe oferta.
+enum PetResourceCategory {
+  veterinary
+  transport
+  temporary_home
+  attention_point
+  rescue
+  other
+}
+
+// Directorio "quiero ayudar", Fase 3. requireAuth para crear: ofrecer un
+// servicio compromete tu identidad, a diferencia de reportar una mascota
+// (que sigue siendo anónimo-friendly). Sin lat/lng — es cobertura de
+// departamento/municipio (catálogo), no un pin exacto. Moderación
+// (hidden/deletedAt) espeja PetReport, no Organization (que hoy no tiene
+// ninguna de las dos).
+model PetResource {
+  id               String              @id @default(uuid())
+  category         PetResourceCategory
+  name             String
+  description      String              @db.Text
+  contactName      String
+  contactEmail     String?
+  contactPhone     String?
+  departmentName   String
+  municipalityName String
+  availabilityNote String?
+  createdById      String
+  hidden           Boolean             @default(false)
+  createdAt        DateTime            @default(now())
+  updatedAt        DateTime            @updatedAt
+  deletedAt        DateTime?
+
+  createdBy User @relation("PetResourceCreatedBy", fields: [createdById], references: [id])
+
+  @@index([category])
+  @@index([departmentName, municipalityName])
+  @@index([createdAt])
 }

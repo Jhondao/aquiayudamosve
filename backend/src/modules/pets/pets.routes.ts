@@ -1,10 +1,27 @@
 import { Router } from "express";
 import { requireAuth } from "../../middleware/auth";
-import { confirmationLimiter, createPetReportLimiter } from "../../middleware/rateLimit";
+import { confirmationLimiter, createPetReportLimiter, guestActionLimiter, revealContactLimiter } from "../../middleware/rateLimit";
 import { validateBody, validateQuery } from "../../middleware/validate";
 import { requireRecaptchaForGuests } from "../../lib/recaptcha";
-import { createPetReport, getPetReport, listPetReports, updatePetStatus } from "./pets.service";
-import { createPetReportSchema, listPetReportsQuerySchema, updatePetStatusSchema } from "./pets.schemas";
+import {
+  confirmPet,
+  createPetReport,
+  createPetSighting,
+  getPetReport,
+  getPossibleMatches,
+  listPetReports,
+  listPetSightings,
+  revealPetContact,
+  updatePetStatus,
+} from "./pets.service";
+import {
+  createPetReportSchema,
+  createPetSightingSchema,
+  listPetReportsQuerySchema,
+  petConfirmSchema,
+  revealPetContactSchema,
+  updatePetStatusSchema,
+} from "./pets.schemas";
 import { uploadPetPhoto } from "./uploads";
 import { getOrCreatePetShareCard, recordPetShareEvent } from "./petShareCard.service";
 import { shareEventSchema } from "../share/share.schemas";
@@ -88,5 +105,78 @@ router.post("/:id/share-event", confirmationLimiter, validateBody(shareEventSche
     next(err);
   }
 });
+
+// Fase 2 — confirmar/marcar incorrecto sin cuenta, mismo stack exacto que
+// POST /reports/:id/confirm: guestActionLimiter (se salta a sí mismo con
+// sesión) + confirmationLimiter + reCAPTCHA (solo bloquea si Google marcó
+// el token inválido).
+router.post(
+  "/:id/confirm",
+  guestActionLimiter,
+  confirmationLimiter,
+  validateBody(petConfirmSchema),
+  requireRecaptchaForGuests("CONFIRM_PET"),
+  async (req, res, next) => {
+    try {
+      const { type, email, phone, displayName } = req.body;
+      res.json(await confirmPet(req.params.id, { userId: req.user?.id, email, phone, displayName }, type));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+// "LA VI AQUÍ" — mismo stack que confirmar, también sin cuenta.
+router.post(
+  "/:id/sightings",
+  guestActionLimiter,
+  confirmationLimiter,
+  validateBody(createPetSightingSchema),
+  requireRecaptchaForGuests("CREATE_PET_SIGHTING"),
+  async (req, res, next) => {
+    try {
+      const { lat, lng, note, email, phone, displayName } = req.body;
+      const sighting = await createPetSighting(req.params.id, { userId: req.user?.id, email, phone, displayName }, { lat, lng, note });
+      res.status(201).json(sighting);
+    } catch (err) {
+      next(err);
+    }
+  }
+);
+
+router.get("/:id/sightings", async (req, res, next) => {
+  try {
+    res.json(await listPetSightings(req.params.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+router.get("/:id/possible-matches", async (req, res, next) => {
+  try {
+    res.json(await getPossibleMatches(req.params.id));
+  } catch (err) {
+    next(err);
+  }
+});
+
+// Revelar contacto — rate limiter propio y dedicado (revealContactLimiter,
+// NUNCA se salta con sesión, ver pets.service.ts#revealPetContact), no
+// guestActionLimiter: acá cualquier cuenta puede rasparse contactos igual
+// de rápido que un invitado si no se limita parejo.
+router.post(
+  "/:id/reveal-contact",
+  revealContactLimiter,
+  validateBody(revealPetContactSchema),
+  requireRecaptchaForGuests("REVEAL_PET_CONTACT"),
+  async (req, res, next) => {
+    try {
+      const { email, phone, displayName } = req.body;
+      res.json(await revealPetContact(req.params.id, { userId: req.user?.id, email, phone, displayName }));
+    } catch (err) {
+      next(err);
+    }
+  }
+);
 
 export default router;
