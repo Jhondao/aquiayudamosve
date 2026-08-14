@@ -33,6 +33,11 @@ export default function AdminPage() {
   const [logs, setLogs] = useState<AuditLog[]>([]);
   const [error, setError] = useState<string | null>(null);
 
+  // Fase 4 — bajo demanda, no en el load() inicial (escanear pares es más
+  // caro que un listado normal, ver pets.service.ts#findDuplicatePets).
+  const [duplicatePairs, setDuplicatePairs] = useState<{ a: PetReport; b: PetReport; distanceMeters: number }[] | null>(null);
+  const [loadingDuplicates, setLoadingDuplicates] = useState(false);
+
   async function load() {
     try {
       const [flaggedRes, allRes, petsRes, resourcesRes, audit] = await Promise.all([
@@ -120,6 +125,32 @@ export default function AdminPage() {
       setLogs(audit.logs);
     } catch (err) {
       setError(err instanceof ApiError ? err.message : "No se pudo aplicar la acción.");
+    }
+  }
+
+  async function loadDuplicates() {
+    setLoadingDuplicates(true);
+    try {
+      const res = await api.getPetDuplicates();
+      setDuplicatePairs(res.pairs);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudieron cargar los posibles duplicados.");
+    } finally {
+      setLoadingDuplicates(false);
+    }
+  }
+
+  async function mergePair(id: string, intoId: string) {
+    const reason = window.prompt("Motivo de la fusión (queda registrado en el log de auditoría):");
+    if (!reason) return;
+    try {
+      await api.mergePets(id, intoId, reason);
+      setDuplicatePairs((prev) => (prev ?? []).filter((p) => p.a.id !== id && p.b.id !== id));
+      setPets((prev) => prev.filter((p) => p.id !== id));
+      const audit = await api.getAuditLogs();
+      setLogs(audit.logs);
+    } catch (err) {
+      setError(err instanceof ApiError ? err.message : "No se pudo fusionar.");
     }
   }
 
@@ -309,6 +340,44 @@ export default function AdminPage() {
         reporte. Si alguien lo marca de mala fe, queda en el log de auditoría de abajo para poder revertirlo.
       </p>
       <PetsTable pets={pets} />
+
+      <h2 className="mt-8 text-sm font-bold">Posibles duplicados</h2>
+      <p className="mt-1 text-xs text-slate-400">
+        Mascotas de la misma especie, cerca entre sí y del mismo lado (perdida↔perdida o encontrada↔encontrada) — se
+        calcula bajo demanda, no en cada carga del panel.
+      </p>
+      {duplicatePairs === null ? (
+        <button
+          onClick={loadDuplicates}
+          disabled={loadingDuplicates}
+          className="mt-2 h-10 rounded-lg border border-border px-4 text-xs font-semibold disabled:opacity-50"
+        >
+          {loadingDuplicates ? "Buscando…" : "Buscar posibles duplicados"}
+        </button>
+      ) : (
+        <div className="mt-2 flex flex-col gap-2">
+          {duplicatePairs.length === 0 && <p className="text-sm text-slate-400">No se encontraron posibles duplicados.</p>}
+          {duplicatePairs.map((pair) => (
+            <div key={`${pair.a.id}-${pair.b.id}`} className="rounded-xl border border-border bg-surface p-3 text-xs">
+              <div className="flex flex-wrap items-center justify-between gap-2">
+                <span>
+                  {PET_SPECIES_META[pair.a.species].emoji} {pair.a.name ?? "Sin nombre"} ({pair.a.id.slice(0, 8)}) ↔{" "}
+                  {pair.b.name ?? "Sin nombre"} ({pair.b.id.slice(0, 8)})
+                </span>
+                <span className="text-slate-400">{(pair.distanceMeters / 1000).toFixed(1)} km</span>
+              </div>
+              <div className="mt-2 flex flex-wrap gap-1.5">
+                <button onClick={() => mergePair(pair.a.id, pair.b.id)} className="rounded-lg border border-border px-2 py-1 font-semibold">
+                  Fusionar A → B
+                </button>
+                <button onClick={() => mergePair(pair.b.id, pair.a.id)} className="rounded-lg border border-border px-2 py-1 font-semibold">
+                  Fusionar B → A
+                </button>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
 
       <h2 className="mt-8 text-sm font-bold">🤝 Recursos "quiero ayudar con mascotas"</h2>
       <PetResourcesTable resources={resources} />

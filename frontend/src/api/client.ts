@@ -374,6 +374,15 @@ export const api = {
       method: "PATCH",
       body: JSON.stringify({ action, reason }),
     }),
+
+  // Fase 4 — bajo demanda, nunca en la carga inicial de AdminPage (ver
+  // pets.service.ts#findDuplicatePets).
+  getPetDuplicates: () => request<{ pairs: { a: PetReport; b: PetReport; distanceMeters: number }[] }>("/api/admin/pets/duplicates"),
+  mergePets: (id: string, intoId: string, reason: string) =>
+    request<(PetReport & { hidden: boolean }) | null>(`/api/admin/pets/${id}/merge`, {
+      method: "PATCH",
+      body: JSON.stringify({ intoId, reason }),
+    }),
 };
 
 export { ApiError };
